@@ -8,6 +8,8 @@ from pydantic import BaseModel, ConfigDict, Field
 
 
 class PermissionsConfig(BaseModel):
+    """Claude permission lists with append-on-merge behavior."""
+
     model_config = ConfigDict(extra="allow")
 
     allow: list[str] = Field(
@@ -32,3 +34,6 @@ class ClaudeConfig(BaseModel):
     hooks: dict[str, Any] = Field(default_factory=dict)
     model: str | None = None
     includeCoAuthoredBy: bool | None = None
+    effortLevel: str | None = None
+    outputStyle: str | None = None
+    extraKnownMarketplaces: dict[str, Any] = Field(default_factory=dict)

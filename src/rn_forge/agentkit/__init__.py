@@ -1,4 +1,8 @@
-"""Unified configuration management for AI coding agents."""
+"""Public package entry points for agentkit.
+
+The package exposes its installed version and the :func:`main` console entry
+point; command dispatch lives in :mod:`rn_forge.agentkit.cli`.
+"""
 
 from __future__ import annotations
 

@@ -1,0 +1,27 @@
+{
+  "hooks": {
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "$HOME/.rn-forge/share/agentkit/hooks/codex/user-prompt-secret-guard.sh",
+            "statusMessage": "Checking prompt"
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "$HOME/.rn-forge/share/agentkit/hooks/codex/pre-bash-guard.sh",
+            "statusMessage": "Checking command"
+          }
+        ]
+      }
+    ]
+  }
+}

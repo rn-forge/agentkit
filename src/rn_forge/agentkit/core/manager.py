@@ -1,21 +1,31 @@
-"""High-level render, sync, scaffold, and resolution operations."""
+"""Orchestrate config resolution, artifact writes, state, drift, and backups.
+
+CLI commands call this module after selecting adapters; adapters supply schema,
+rendering, and artifact declarations while I/O and state helpers perform writes.
+"""
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+import os
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any
 
 from ..agents.base import AgentAdapter, Scope
+from .artifacts import Artifact
 from .config import MergeResult
 from .diff import unified_diff
 from .io import atomic_write, read_config, write_config
+from .paths import global_root, project_scope_root
 from .state import StateStore, backup_file, content_hash, file_hash
 
 
 @dataclass(frozen=True, slots=True)
 class OperationResult:
+    """Outcome of one action on one managed artifact."""
+
     agent: str
+    artifact: str
     action: str
     changed: bool
     native_path: Path
@@ -23,10 +33,6 @@ class OperationResult:
     diff: str = ""
     backup_path: Path | None = None
     message: str = ""
-
-
-def global_root() -> Path:
-    return Path.home() / ".agentkit"
 
 
 def project_root(start: Path | None = None) -> Path:
@@ -41,10 +47,12 @@ def project_root(start: Path | None = None) -> Path:
 
 
 def scope_root(scope: Scope, repo_root: Path) -> Path:
-    return global_root() if scope == "global" else Path(repo_root) / ".agentkit"
+    """Return the global or repository-local agentkit working-data root."""
+    return global_root() if scope == "global" else project_scope_root(repo_root)
 
 
 def managed_config_path(adapter: AgentAdapter, root: Path) -> Path:
+    """Return an adapter's managed source path beneath a scope root."""
     return Path(root) / adapter.name / "config.toml"
 
 
@@ -54,8 +62,12 @@ def resolve_config(
     repo_root: Path,
     overrides: dict[str, Any] | None = None,
 ) -> tuple[MergeResult, list[tuple[str, dict[str, Any]]]]:
-    """Resolve defaults/global/local/overrides and retain layers for display."""
-    defaults = adapter.defaults()
+    """Resolve defaults, managed sources, and overrides in precedence order.
+
+    Returns:
+        The merged result and named input layers for provenance display.
+    """
+    defaults = adapter.defaults(scope)
     global_config = read_config(
         managed_config_path(adapter, global_root()), missing_ok=True
     )
@@ -65,7 +77,7 @@ def resolve_config(
     ]
     if scope == "local":
         local_config = read_config(
-            managed_config_path(adapter, Path(repo_root) / ".agentkit"), missing_ok=True
+            managed_config_path(adapter, project_scope_root(repo_root)), missing_ok=True
         )
         layers.append(("local", local_config))
     if overrides:
@@ -80,56 +92,18 @@ def apply_adapter(
     *,
     overrides: dict[str, Any] | None = None,
     dry_run: bool = False,
-) -> OperationResult:
-    """Resolve, validate, render into staging, and sync to a native path."""
-    root = scope_root(scope, repo_root)
+) -> list[OperationResult]:
+    """Resolve once, then render or copy and sync every declared artifact.
+
+    Raises:
+        ValueError: The merged configuration fails adapter validation.
+    """
     merged, _ = resolve_config(adapter, scope, repo_root, overrides)
     errors = adapter.validate(merged.config)
     if errors:
         raise ValueError("; ".join(errors))
-    rendered_content = adapter.render(merged.config, scope=scope)
-    rendered_path = adapter.rendered_path(root, scope)
-    native_path = adapter.native_path(scope, repo_root)
-    actual = native_path.read_text(encoding="utf-8") if native_path.is_file() else ""
-    diff = unified_diff(
-        rendered_content,
-        actual,
-        expected_name=str(rendered_path),
-        actual_name=str(native_path),
-    )
-    digest = content_hash(rendered_content)
-    changed = file_hash(native_path) != digest or file_hash(rendered_path) != digest
-    if dry_run:
-        return OperationResult(
-            adapter.name,
-            "apply",
-            changed,
-            native_path,
-            rendered_path,
-            diff=diff,
-            message="dry-run",
-        )
-
-    store = StateStore(root)
-    prior = store.get(native_path)
-    current_hash = file_hash(native_path)
-    if not changed and prior is not None and prior.get("hash") == digest:
-        return OperationResult(
-            adapter.name, "apply", False, native_path, rendered_path, diff
-        )
-    backup = None
-    if native_path.is_file() and current_hash != digest:
-        if prior is None or prior.get("hash") != current_hash:
-            backup = backup_file(native_path, root)
-
-    if file_hash(rendered_path) != digest:
-        atomic_write(rendered_path, rendered_content)
-    if current_hash != digest:
-        atomic_write(native_path, rendered_content)
-    source_layer = _highest_source(merged.provenance)
-    store.record(native_path, digest, source_layer)
-    return OperationResult(
-        adapter.name, "apply", changed, native_path, rendered_path, diff, backup
+    return _apply_resolved(
+        adapter, scope, repo_root, merged, action="apply", dry_run=dry_run
     )
 
 
@@ -139,53 +113,69 @@ def sync_adapter(
     repo_root: Path,
     *,
     dry_run: bool = False,
-) -> OperationResult:
-    """Copy staged rendered content to the native path without re-rendering."""
-    root = scope_root(scope, repo_root)
-    rendered_path = adapter.rendered_path(root, scope)
-    native_path = adapter.native_path(scope, repo_root)
-    if not rendered_path.is_file():
-        raise FileNotFoundError(
-            f"No rendered config for {adapter.name}: {rendered_path}"
-        )
-    content = rendered_path.read_text(encoding="utf-8")
-    actual = native_path.read_text(encoding="utf-8") if native_path.is_file() else ""
-    digest = content_hash(content)
-    changed = file_hash(native_path) != digest
-    diff = unified_diff(
-        content, actual, expected_name=str(rendered_path), actual_name=str(native_path)
-    )
-    if dry_run:
-        return OperationResult(
-            adapter.name,
-            "sync",
-            changed,
-            native_path,
-            rendered_path,
-            diff,
-            message="dry-run",
-        )
+) -> list[OperationResult]:
+    """Copy every staged artifact to its native path without re-rendering.
 
+    Raises:
+        FileNotFoundError: A required managed copy does not exist.
+    """
+    root = scope_root(scope, repo_root)
     store = StateStore(root)
-    prior = store.get(native_path)
-    current_hash = file_hash(native_path)
-    if not changed and prior is not None and prior.get("hash") == digest:
-        return OperationResult(
-            adapter.name, "sync", False, native_path, rendered_path, diff
+    results: list[OperationResult] = []
+    for artifact in adapter.artifacts(scope):
+        native = adapter.native_path(scope, repo_root, artifact)
+        rendered = _managed_copy_path(adapter, root, scope, artifact, native)
+        if not rendered.is_file():
+            raise FileNotFoundError(
+                f"No rendered artifact for {adapter.name}/{artifact.key}: {rendered}"
+            )
+        content = rendered.read_bytes()
+        digest = content_hash(content)
+        current_hash = file_hash(native)
+        mode_changed = _mode_differs(native, artifact)
+        changed = current_hash != digest or mode_changed
+        diff = _content_diff(content, native, rendered)
+        if dry_run:
+            results.append(
+                OperationResult(
+                    adapter.name,
+                    artifact.key,
+                    "sync",
+                    changed,
+                    native,
+                    rendered,
+                    diff,
+                    message="dry-run",
+                )
+            )
+            continue
+
+        prior = store.get(native)
+        backup = None
+        if (
+            native.is_file()
+            and current_hash != digest
+            and (prior is None or prior.get("hash") != current_hash)
+        ):
+            backup = backup_file(native, root)
+        if current_hash != digest:
+            atomic_write(native, content, mode=_artifact_mode(artifact))
+        elif mode_changed:
+            os.chmod(native, 0o755)
+        store.record(native, digest, "rendered")
+        results.append(
+            OperationResult(
+                adapter.name,
+                artifact.key,
+                "sync",
+                changed,
+                native,
+                rendered,
+                diff,
+                backup,
+            )
         )
-    backup = None
-    if (
-        native_path.is_file()
-        and changed
-        and (prior is None or prior.get("hash") != current_hash)
-    ):
-        backup = backup_file(native_path, root)
-    if changed:
-        atomic_write(native_path, content)
-    store.record(native_path, digest, "rendered")
-    return OperationResult(
-        adapter.name, "sync", changed, native_path, rendered_path, diff, backup
-    )
+    return results
 
 
 def reset_adapter(
@@ -193,38 +183,29 @@ def reset_adapter(
     repo_root: Path,
     *,
     dry_run: bool = False,
-) -> OperationResult:
-    """Replace global managed and native configuration with schema defaults."""
+) -> list[OperationResult]:
+    """Replace global managed configuration with defaults, then apply all files."""
     root = global_root()
-    native = adapter.global_native_path()
-    rendered = adapter.render(adapter.defaults(), scope="global")
-    actual = native.read_text(encoding="utf-8") if native.is_file() else ""
-    diff = unified_diff(
-        rendered, actual, expected_name="built-in defaults", actual_name=str(native)
-    )
+    defaults = adapter.defaults("global")
     if dry_run:
-        return OperationResult(
-            adapter.name,
-            "reset",
-            bool(diff),
-            native,
-            adapter.rendered_path(root, "global"),
-            diff,
-            message="dry-run",
+        merged = adapter.merge(("defaults", defaults))
+        return _apply_resolved(
+            adapter, "global", repo_root, merged, action="reset", dry_run=True
         )
 
-    backup = backup_file(native, root)
-    write_config(managed_config_path(adapter, root), adapter.defaults())
-    result = apply_adapter(adapter, "global", repo_root)
-    return OperationResult(
-        result.agent,
-        "reset",
-        result.changed,
-        result.native_path,
-        result.rendered_path,
-        diff,
-        backup,
-    )
+    primary = adapter.global_native_path()
+    backup = backup_file(primary, root)
+    write_config(managed_config_path(adapter, root), defaults)
+    results = apply_adapter(adapter, "global", repo_root)
+    reset_results = [replace(result, action="reset") for result in results]
+    if backup is not None:
+        reset_results = [
+            replace(result, backup_path=backup)
+            if result.artifact == "config"
+            else result
+            for result in reset_results
+        ]
+    return reset_results
 
 
 def init_adapter(
@@ -233,25 +214,149 @@ def init_adapter(
     *,
     dry_run: bool = False,
 ) -> OperationResult:
-    """Scaffold an inheriting project config, without overwriting existing source."""
-    root = Path(repo_root) / ".agentkit"
+    """Scaffold an inheriting project config without overwriting existing source."""
+    root = project_scope_root(repo_root)
     config_path = managed_config_path(adapter, root)
-    rendered = adapter.rendered_path(root, "local")
-    native = adapter.local_native_path(repo_root)
+    artifact = adapter.primary_artifact("local")
+    rendered = adapter.rendered_path(root, "local", artifact)
+    native = adapter.native_path("local", repo_root, artifact)
     if config_path.exists():
         return OperationResult(
-            adapter.name, "init", False, native, rendered, message="already initialized"
+            adapter.name,
+            artifact.key,
+            "init",
+            False,
+            native,
+            rendered,
+            message="already initialized",
         )
     if not dry_run:
         write_config(config_path, {})
     return OperationResult(
         adapter.name,
+        artifact.key,
         "init",
         True,
         native,
         rendered,
         message="dry-run" if dry_run else "initialized",
     )
+
+
+def _apply_resolved(
+    adapter: AgentAdapter,
+    scope: Scope,
+    repo_root: Path,
+    merged: MergeResult,
+    *,
+    action: str,
+    dry_run: bool,
+) -> list[OperationResult]:
+    root = scope_root(scope, repo_root)
+    store = StateStore(root)
+    results: list[OperationResult] = []
+    for artifact in adapter.artifacts(scope):
+        content = adapter.render_artifact(artifact, merged.config, scope)
+        native = adapter.native_path(scope, repo_root, artifact)
+        rendered = _managed_copy_path(adapter, root, scope, artifact, native)
+        digest = content_hash(content)
+        current_hash = file_hash(native)
+        rendered_hash = file_hash(rendered)
+        mode_changed = _mode_differs(native, artifact)
+        changed = current_hash != digest or rendered_hash != digest or mode_changed
+        diff = _content_diff(content, native, rendered)
+        if dry_run:
+            results.append(
+                OperationResult(
+                    adapter.name,
+                    artifact.key,
+                    action,
+                    changed,
+                    native,
+                    rendered,
+                    diff,
+                    message="dry-run",
+                )
+            )
+            continue
+
+        prior = store.get(native)
+        backup = None
+        if native.is_file() and current_hash != digest:
+            if prior is None or prior.get("hash") != current_hash:
+                backup = backup_file(native, root)
+
+        mode = _artifact_mode(artifact)
+        if rendered_hash != digest:
+            atomic_write(rendered, content, mode=mode)
+        elif artifact.executable and _mode_differs(rendered, artifact):
+            os.chmod(rendered, 0o755)
+        if native != rendered and current_hash != digest:
+            atomic_write(native, content, mode=mode)
+        elif native != rendered and mode_changed:
+            os.chmod(native, 0o755)
+
+        source_layer = (
+            _highest_source(merged.provenance)
+            if artifact.key == "config"
+            else "packaged"
+        )
+        store.record(native, digest, source_layer)
+        results.append(
+            OperationResult(
+                adapter.name,
+                artifact.key,
+                action,
+                changed,
+                native,
+                rendered,
+                diff,
+                backup,
+            )
+        )
+    return results
+
+
+def _managed_copy_path(
+    adapter: AgentAdapter,
+    root: Path,
+    scope: Scope,
+    artifact: Artifact,
+    native: Path,
+) -> Path:
+    if artifact.root == "share":
+        return native
+    return adapter.rendered_path(root, scope, artifact)
+
+
+def _content_diff(content: str | bytes, native: Path, rendered: Path) -> str:
+    if file_hash(native) == content_hash(content):
+        return ""
+    if isinstance(content, bytes):
+        try:
+            expected = content.decode("utf-8")
+        except UnicodeDecodeError:
+            return f"binary artifact differs: {native}\n"
+    else:
+        expected = content
+    try:
+        actual = native.read_text(encoding="utf-8") if native.is_file() else ""
+    except UnicodeDecodeError:
+        return f"binary artifact differs: {native}\n"
+    return unified_diff(
+        expected,
+        actual,
+        expected_name=str(rendered),
+        actual_name=str(native),
+    )
+
+
+def _artifact_mode(artifact: Artifact) -> int | None:
+    return 0o755 if artifact.executable else None
+
+
+def _mode_differs(path: Path, artifact: Artifact) -> bool:
+    return artifact.executable and path.is_file() and path.stat().st_mode & 0o777 != 0o755
 
 
 def _highest_source(provenance: dict[str, str]) -> str:

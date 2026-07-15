@@ -1,0 +1,18 @@
+model = "gpt-5.4"
+personality = "pragmatic"
+model_reasoning_effort = "medium"
+model_reasoning_summary = "concise"
+approval_policy = "on-request"
+sandbox_mode = "workspace-write"
+
+[sandbox_workspace_write]
+network_access = false
+
+[features]
+codex_hooks = true
+
+[profiles.trusted]
+approval_policy = "never"
+
+[profiles.deep]
+model_reasoning_effort = "high"

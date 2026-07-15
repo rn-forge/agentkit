@@ -1,9 +1,13 @@
-"""Root-level diff, doctor, and version commands."""
+"""Implement root-level diff, doctor, and version workflows.
+
+The commands combine adapter selection with core resolution, diagnostics, and
+structural diff helpers without mutating managed or native files.
+"""
 
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Literal
+from typing import Any, Literal
 
 import typer
 from rich.table import Table
@@ -11,7 +15,7 @@ from rich.table import Table
 from .. import __version__
 from ..core.config import parse_cli_overrides
 from ..core.diff import layered_changes, unified_diff
-from ..core.doctor import check_agent
+from ..core.doctor import CheckResult, check_agent
 from ..core.manager import project_root, resolve_config, scope_root
 from .common import command_options, console, emit, fail, options, selected
 
@@ -38,20 +42,58 @@ def diff_command(
     root = project_root(repo)
     try:
         overrides = parse_cli_overrides(set_value or [])
-        records = []
+        records: list[dict[str, Any]] = []
         drift = False
         for adapter in selected(agent):
             merged, layers = resolve_config(adapter, scope, root, overrides)
-            expected = adapter.render(merged.config, scope=scope)
-            native = adapter.native_path(scope, root)
-            actual = native.read_text(encoding="utf-8") if native.is_file() else ""
-            text_diff = unified_diff(
-                expected,
-                actual,
-                expected_name="merged/rendered",
-                actual_name=str(native),
-            )
-            drift = drift or bool(text_diff)
+            artifact_diffs: list[dict[str, Any]] = []
+            for artifact in adapter.artifacts(scope):
+                expected = adapter.render_artifact(artifact, merged.config, scope)
+                native = adapter.native_path(scope, root, artifact)
+                if isinstance(expected, bytes):
+                    try:
+                        expected_text = expected.decode("utf-8")
+                    except UnicodeDecodeError:
+                        text_diff = (
+                            f"binary artifact differs: {native}"
+                            if not native.is_file()
+                            or native.read_bytes() != expected
+                            else ""
+                        )
+                    else:
+                        actual = (
+                            native.read_text(encoding="utf-8")
+                            if native.is_file()
+                            else ""
+                        )
+                        text_diff = unified_diff(
+                            expected_text,
+                            actual,
+                            expected_name=f"merged/rendered:{artifact.key}",
+                            actual_name=str(native),
+                        )
+                else:
+                    actual = (
+                        native.read_text(encoding="utf-8")
+                        if native.is_file()
+                        else ""
+                    )
+                    text_diff = unified_diff(
+                        expected,
+                        actual,
+                        expected_name=f"merged/rendered:{artifact.key}",
+                        actual_name=str(native),
+                    )
+                artifact_diffs.append(
+                    {
+                        "artifact": artifact.key,
+                        "native": str(native),
+                        "drift": bool(text_diff),
+                        "diff": text_diff,
+                    }
+                )
+            has_drift = any(item["drift"] for item in artifact_diffs)
+            drift = drift or has_drift
             records.append(
                 {
                     "agent": adapter.name,
@@ -66,8 +108,13 @@ def diff_command(
                         }
                         for change in layered_changes(layers)
                     ],
-                    "drift": bool(text_diff),
-                    "diff": text_diff,
+                    "artifacts": artifact_diffs,
+                    "drift": has_drift,
+                    "diff": "\n".join(
+                        str(item["diff"])
+                        for item in artifact_diffs
+                        if item["diff"]
+                    ),
                 }
             )
     except (OSError, ValueError) as exc:
@@ -112,7 +159,7 @@ def doctor_command(
     """Validate schemas, templates, paths, state, binaries, and drift."""
     command_options(ctx, quiet=quiet, json_output=json_output)
     root = project_root(repo)
-    results = []
+    results: list[CheckResult] = []
     try:
         for adapter in selected(agent):
             results.extend(check_agent(adapter, scope, root, scope_root(scope, root)))
@@ -158,9 +205,12 @@ def version_command(
 ) -> None:
     """Show agentkit and adapter versions."""
     command_options(ctx, quiet=quiet, json_output=json_output)
-    data = {
+    adapter_versions: dict[str, str] = {
+        adapter.name: adapter.version for adapter in selected(None)
+    }
+    data: dict[str, Any] = {
         "agentkit": __version__,
-        "adapters": {adapter.name: adapter.version for adapter in selected(None)},
+        "adapters": adapter_versions,
     }
     if options(ctx)["json"]:
         emit(ctx, data)
@@ -168,5 +218,5 @@ def version_command(
         typer.echo(__version__)
     else:
         console.print(f"agentkit {__version__}")
-        for name, adapter_version in data["adapters"].items():
+        for name, adapter_version in adapter_versions.items():
             console.print(f"  {name}: {adapter_version}")

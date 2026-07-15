@@ -1,8 +1,13 @@
-"""Repository-scope commands."""
+"""Implement repository init, update, and status workflows.
+
+These Typer commands locate repository roots, resolve local managed sources,
+and delegate artifact writes to the core manager.
+"""
 
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Any
 
 import typer
 from rich.table import Table
@@ -16,7 +21,8 @@ from ..core.manager import (
     project_root,
     resolve_config,
 )
-from ..core.state import file_hash
+from ..core.paths import project_scope_root
+from ..core.state import content_hash, file_hash
 from .common import (
     command_options,
     console,
@@ -45,7 +51,7 @@ def init_command(
     quiet: bool = typer.Option(False, "--quiet", "-q", help="Suppress output."),
     json_output: bool = typer.Option(False, "--json", help="Emit JSON."),
 ) -> None:
-    """Scaffold .agentkit sources in a repository."""
+    """Scaffold rn-forge agentkit sources in a repository."""
     command_options(ctx, quiet=quiet, json_output=json_output)
     root = project_root(repo)
     try:
@@ -79,8 +85,11 @@ def update_command(
     try:
         overrides = parse_cli_overrides(set_value or [])
         results = [
-            apply_adapter(item, "local", root, overrides=overrides, dry_run=dry_run)
+            result
             for item in selected(agent)
+            for result in apply_adapter(
+                item, "local", root, overrides=overrides, dry_run=dry_run
+            )
         ]
     except (OSError, ValueError) as exc:
         fail(str(exc))
@@ -100,13 +109,24 @@ def status_command(
     """Show project initialization and native drift."""
     command_options(ctx, quiet=quiet, json_output=json_output)
     root = project_root(repo)
-    scope = root / ".agentkit"
-    rows = []
+    scope = project_scope_root(root)
+    rows: list[dict[str, Any]] = []
     for adapter in selected(agent):
         config = managed_config_path(adapter, scope)
-        rendered = adapter.rendered_path(scope, "local")
+        merged, layers = resolve_config(adapter, "local", root)
+        artifacts = adapter.artifacts("local")
+        paths = [
+            (
+                artifact,
+                adapter.native_path("local", root, artifact),
+                adapter.native_path("local", root, artifact)
+                if artifact.root == "share"
+                else adapter.rendered_path(scope, "local", artifact),
+                content_hash(adapter.render_artifact(artifact, merged.config, "local")),
+            )
+            for artifact in artifacts
+        ]
         native = adapter.local_native_path(root)
-        _, layers = resolve_config(adapter, "local", root)
         local_overrides = [
             change.path for change in layered_changes(layers) if change.layer == "local"
         ]
@@ -114,9 +134,18 @@ def status_command(
             {
                 "agent": adapter.name,
                 "initialized": config.exists(),
-                "rendered": rendered.exists(),
+                "rendered": all(rendered.exists() for _, _, rendered, _ in paths),
                 "native": str(native),
-                "drift": rendered.exists() and file_hash(rendered) != file_hash(native),
+                "drift": any(
+                    not rendered.exists()
+                    or not native_path.exists()
+                    or file_hash(native_path) != expected_hash
+                    or (
+                        artifact.root != "share"
+                        and file_hash(rendered) != expected_hash
+                    )
+                    for artifact, native_path, rendered, expected_hash in paths
+                ),
                 "local_overrides": local_overrides,
             }
         )

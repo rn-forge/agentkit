@@ -1,75 +1,141 @@
 # agentkit
 
 `agentkit` manages global and repository-local configuration for AI coding
-agents from one layered source of truth. It currently includes adapters for
-Claude Code and Codex, and discovers third-party adapters through Python entry
-points.
+agents from one layered source of truth. It ships adapters and a default asset
+pack for Claude Code and Codex, and discovers third-party adapters through
+Python entry points.
 
-## Configuration model
+## Install
 
-Values are resolved in increasing precedence:
+The installer creates a versioned environment under
+`~/.rn-forge/agentkit/v<version>/`, updates `current`, and links the CLI at
+`~/.rn-forge/bin/agentkit`:
 
-```text
-built-in defaults → ~/.agentkit/<agent>/config.toml
-                  → <repo>/.agentkit/<agent>/config.toml
-                  → --set dotted.key=value
+```bash
+./install.sh
+export PATH="$HOME/.rn-forge/bin:$PATH"
+agentkit version
 ```
 
-Dictionaries merge recursively. Lists replace lower layers unless the adapter
-schema marks that field with `merge_strategy: append`. Every final key retains
-its source-layer provenance.
+`RNF_HOME` overrides `~/.rn-forge`. Installation currently runs from a checkout,
+so this repository and the sibling `../pykit` path dependency must remain
+available while `install.sh` runs. The installer does not edit shell rc files.
 
-Managed sources are never edited into an agent's file directly. A command first
-renders to `.agentkit/<agent>/rendered/<native-path>`, then atomically syncs that
-content to the native path. Hashes in `.agentkit/state.json` make repeated runs
-idempotent, and agentkit backs up unmanaged/manual native changes before an
-overwrite.
-
-## Install and use
+For development:
 
 ```bash
 uv sync --group dev
 uv run agentkit --help
+```
 
-# Create local sources for both built-in adapters
-uv run agentkit project init
+## Configuration model
 
-# Update one local agent, with a one-run override
-uv run agentkit project update --agent codex --set model='"gpt-5"'
+Values resolve in increasing precedence:
 
-# Preview a global apply without writing
-uv run agentkit global apply --agent claude --dry-run
+```text
+packaged scope defaults
+  → $RNF_HOME/share/agentkit/<agent>/config.toml
+  → <repo>/.rn-forge/agentkit/<agent>/config.toml
+  → --set dotted.key=value
+```
+
+The local managed source participates only for local operations. Packaged global
+defaults do not leak into packaged local defaults, while a user's managed global
+source still feeds both scopes.
+
+Dictionaries merge recursively. Lists replace lower layers unless the adapter
+schema marks a field with `merge_strategy: append`. Every final key retains its
+source-layer provenance.
+
+Agent-rooted artifacts render beneath
+`<scope-root>/<agent>/rendered/<native-path>` before being copied atomically to
+their native locations. Shared hooks live directly beneath
+`<scope-root>/hooks/`. Sync is always a one-way copy, never a symlink. Hashes in
+`state.json` make repeated runs idempotent, and manual native drift is backed up
+under `<scope-root>/backups/` before overwrite.
+
+The default global scope root is `~/.rn-forge/share/agentkit`; a repository uses
+`<repo>/.rn-forge/agentkit`.
+
+## Default pack
+
+`agentkit global apply` installs these global artifacts:
+
+| Agent | Native agent files | Shared executable hooks |
+| --- | --- | --- |
+| Claude | `~/.claude/settings.json`, `~/.claude/CLAUDE.md`, `~/.claude/output-styles/concise.md` | `hooks/claude/pre-bash-guard.sh`, `user-prompt-secret-guard.sh`, `pre-write-protect.sh`, `session-compact-context.sh`, `post-edit-git-stage.sh` |
+| Codex | `~/.codex/config.toml`, `~/.codex/AGENTS.md`, `~/.codex/hooks.json`, `~/.codex/skills/repo-context/SKILL.md`, `agents/openai.yaml` | `hooks/codex/pre-bash-guard.sh`, `user-prompt-secret-guard.sh` |
+
+Both adapters declare the shared `hooks/lib/guard-core.sh`. The shared library
+contains the common destructive-command and prompt-secret checks; thin adapters
+emit Claude's stderr/exit-2 or Codex's JSON/exit-0 blocking dialect.
+
+Project initialization and update install:
+
+| Agent | Native agent files | Shared executable hooks |
+| --- | --- | --- |
+| Claude | `<repo>/.claude/settings.local.json` | `<repo>/.rn-forge/agentkit/hooks/claude/post-edit-format.sh` |
+| Codex | `<repo>/.codex/config.toml` | — |
+
+## Use
+
+```bash
+# Create local managed sources for both built-in adapters
+agentkit project init
+
+# Render and copy repository-local artifacts
+agentkit project update
+
+# Apply the global default pack
+agentkit global apply
+
+# Preview one adapter with a one-run override
+agentkit global apply --agent codex --set model='"gpt-5"' --dry-run
 
 # CI-friendly drift checks (exit status 2 means drift)
-uv run agentkit diff --scope local --check
-uv run agentkit doctor --scope local --check
+agentkit diff --scope local --check
+agentkit doctor --scope local --check
 
 # Scriptable output
-uv run agentkit --json global list
+agentkit --json global list
 ```
 
 Global commands are `apply`, `sync`, `reset`, and `list`. Project commands are
 `init`, `update`, and `status`. Root commands are `diff`, `doctor`, and
 `version`. `--quiet` and `--json` are global output flags.
 
+## Source layout
+
+| Folder | Purpose |
+| --- | --- |
+| `src/rn_forge/agentkit/agents/` | Adapter interface, registry, built-in schemas, defaults, templates, and discovery-by-location assets |
+| `src/rn_forge/agentkit/assets/hooks/` | Shared guard library and per-agent hook scripts |
+| `src/rn_forge/agentkit/core/` | Artifacts, paths, merge, render, I/O, state, diff, doctor, and manager services |
+| `src/rn_forge/agentkit/commands/` | Typer global, project, and root command groups |
+| `tests/` | Isolated tests mirroring the source tree; fake `HOME` and `RNF_HOME` are provided by `conftest.py` |
+| `install.sh` | Checkout-based, versioned rn-forge installer |
+
 ## Adding an adapter
 
-Implement `rn_forge.agentkit.agents.base.AgentAdapter`, then publish it under
-the `agentkit.adapters` entry-point group:
+Implement `rn_forge.agentkit.agents.base.AgentAdapter`, including its schema,
+scope-aware defaults, primary renderer/parser, and ordered artifact declarations.
+Publish it under the `agentkit.adapters` entry-point group:
 
 ```toml
 [project.entry-points."agentkit.adapters"]
 my-agent = "my_package:MyAgentAdapter"
 ```
 
-An adapter declares its schema, native paths, rendered relative path, renderer,
-and native parser. Optional adapter-specific Typer commands can be exposed with
+An artifact chooses either a Jinja template or packaged static source, an agent
+or share root, a stable key, a native-relative path, and optional executable
+mode. Optional adapter-specific Typer commands can be exposed with
 `cli_extension`.
 
 ## Development
 
 ```bash
-UV_CACHE_DIR=.uv-cache uv run pytest
+UV_CACHE_DIR=.uv-cache uv run pytest -q
 UV_CACHE_DIR=.uv-cache uv run ruff check src tests
-UV_CACHE_DIR=.uv-cache uv run pyright src tests
+UV_CACHE_DIR=.uv-cache uv run pyright src
+UV_CACHE_DIR=/tmp/agentkit-uv-cache uv build
 ```

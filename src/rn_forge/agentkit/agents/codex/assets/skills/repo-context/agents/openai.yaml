@@ -1,0 +1,5 @@
+version: 1
+metadata:
+  display_name: Repo Context
+  short_description: On-demand repo orientation
+  default_prompt: Get a brief snapshot of the current repository state.

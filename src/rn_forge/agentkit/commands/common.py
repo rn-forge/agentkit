@@ -1,11 +1,15 @@
-"""Shared CLI selection, formatting, and error helpers."""
+"""Share adapter selection, output modes, JSON conversion, and CLI failures.
+
+Global, project, and shared command groups use these helpers to keep quiet,
+Rich, and machine-readable output behavior consistent.
+"""
 
 from __future__ import annotations
 
 import json
 from dataclasses import asdict, is_dataclass
 from pathlib import Path
-from typing import Any, NoReturn
+from typing import Any, NoReturn, cast
 
 import typer
 from rich.console import Console
@@ -18,6 +22,7 @@ console = Console()
 
 
 def options(ctx: typer.Context) -> dict[str, bool]:
+    """Return normalized quiet and JSON flags from the root Typer context."""
     root = ctx.find_root()
     return root.obj or {"quiet": False, "json": False}
 
@@ -25,7 +30,11 @@ def options(ctx: typer.Context) -> dict[str, bool]:
 def command_options(
     ctx: typer.Context, *, quiet: bool = False, json_output: bool = False
 ) -> None:
-    """Allow output flags both before and after a command name."""
+    """Allow output flags both before and after a command name.
+
+    Raises:
+        typer.BadParameter: Quiet and JSON output are both requested.
+    """
     flags = options(ctx)
     final_quiet = flags["quiet"] or quiet
     final_json = flags["json"] or json_output
@@ -35,6 +44,7 @@ def command_options(
 
 
 def selected(names: list[str] | None) -> list[AgentAdapter]:
+    """Resolve optional adapter names into installed adapter instances."""
     try:
         return registry.select(names)
     except KeyError as exc:
@@ -42,6 +52,7 @@ def selected(names: list[str] | None) -> list[AgentAdapter]:
 
 
 def emit(ctx: typer.Context, value: Any, *, quiet_text: str | None = None) -> None:
+    """Emit a value according to the active Rich, quiet, or JSON mode."""
     flags = options(ctx)
     if flags["json"]:
         typer.echo(json.dumps(_jsonable(value), indent=2, sort_keys=True))
@@ -55,6 +66,7 @@ def emit(ctx: typer.Context, value: Any, *, quiet_text: str | None = None) -> No
 
 
 def emit_operations(ctx: typer.Context, results: list[OperationResult]) -> None:
+    """Emit per-artifact operation results for human or JSON consumers."""
     if options(ctx)["json"]:
         emit(ctx, results)
         return
@@ -64,7 +76,8 @@ def emit_operations(ctx: typer.Context, results: list[OperationResult]) -> None:
         status = "changed" if result.changed else "unchanged"
         dry = " (dry-run)" if result.message == "dry-run" else ""
         console.print(
-            f"[bold]{result.agent}[/bold]: {result.action} {status}{dry} → {result.native_path}"
+            f"[bold]{result.agent}[/bold]/{result.artifact}: "
+            f"{result.action} {status}{dry} → {result.native_path}"
         )
         if result.diff and result.message == "dry-run":
             console.print(result.diff, markup=False)
@@ -73,6 +86,7 @@ def emit_operations(ctx: typer.Context, results: list[OperationResult]) -> None:
 
 
 def fail(message: str) -> NoReturn:
+    """Print a consistent error and terminate the current command."""
     console.print(f"[red]error:[/red] {message}", highlight=False)
     raise typer.Exit(1)
 
@@ -81,9 +95,11 @@ def _jsonable(value: Any) -> Any:
     if is_dataclass(value) and not isinstance(value, type):
         return _jsonable(asdict(value))
     if isinstance(value, dict):
-        return {str(key): _jsonable(item) for key, item in value.items()}
+        mapping = cast(dict[Any, Any], value)
+        return {str(key): _jsonable(item) for key, item in mapping.items()}
     if isinstance(value, (list, tuple)):
-        return [_jsonable(item) for item in value]
+        sequence = cast(list[Any] | tuple[Any, ...], value)
+        return [_jsonable(item) for item in sequence]
     if isinstance(value, Path):
         return str(value)
     return value

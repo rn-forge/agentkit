@@ -1,4 +1,8 @@
-"""agentkit command-line dispatcher."""
+"""Create the root Typer application and mount agentkit command groups.
+
+The dispatcher combines built-in global, project, and shared commands with any
+adapter-specific Typer extensions exposed by the adapter registry.
+"""
 
 from __future__ import annotations
 

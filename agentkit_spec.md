@@ -28,6 +28,10 @@ interface.
 
 ## 3. Repo Layout
 
+> **Superseded by refinement plan 01:** use the repository and packaged-data
+> layout defined in `agentkit_refinement_plan.md`; this section is retained as
+> historical context only.
+
 ```
 agentkit/
 ├── pyproject.toml
@@ -102,6 +106,10 @@ built-in defaults → global (~/.agentkit/<agent>/config.*)
 ---
 
 ## 5. Standard Agent Folder Structure
+
+> **Superseded by refinement plan 01:** use the rn-forge global/project roots
+> and multi-artifact layout defined in `agentkit_refinement_plan.md`; this
+> section is retained as historical context only.
 
 Each agent adapter declares where its native config lives, on both scopes:
 
@@ -256,6 +264,10 @@ for agent in registry.discover():
 ---
 
 ## 10. pyproject.toml — key sections
+
+> **Superseded by refinement plan 01:** use the package and installation layout
+> defined in `agentkit_refinement_plan.md`; this example is retained as
+> historical context only.
 
 ```toml
 [project]

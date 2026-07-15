@@ -1,6 +1,12 @@
-"""Global-scope commands."""
+"""Implement global apply, sync, reset, and status-list workflows.
+
+These Typer commands select adapters and delegate file operations to the core
+manager beneath ``$RNF_HOME/share/agentkit``.
+"""
 
 from __future__ import annotations
+
+from typing import Any
 
 import typer
 from rich.table import Table
@@ -8,13 +14,14 @@ from rich.table import Table
 from ..core.config import parse_cli_overrides
 from ..core.manager import (
     apply_adapter,
-    global_root,
     managed_config_path,
     project_root,
+    resolve_config,
     reset_adapter,
     sync_adapter,
 )
-from ..core.state import file_hash
+from ..core.paths import global_root
+from ..core.state import content_hash, file_hash
 from .common import (
     command_options,
     console,
@@ -48,10 +55,11 @@ def apply_command(
     try:
         overrides = parse_cli_overrides(set_value or [])
         results = [
-            apply_adapter(
+            result
+            for item in selected(agent)
+            for result in apply_adapter(
                 item, "global", project_root(), overrides=overrides, dry_run=dry_run
             )
-            for item in selected(agent)
         ]
     except (OSError, ValueError) as exc:
         fail(str(exc))
@@ -74,8 +82,9 @@ def sync_command(
     command_options(ctx, quiet=quiet, json_output=json_output)
     try:
         results = [
-            sync_adapter(item, "global", project_root(), dry_run=dry_run)
+            result
             for item in selected(agent)
+            for result in sync_adapter(item, "global", project_root(), dry_run=dry_run)
         ]
     except (OSError, ValueError) as exc:
         fail(str(exc))
@@ -104,7 +113,9 @@ def reset_command(
             raise typer.Abort()
     try:
         results = [
-            reset_adapter(item, project_root(), dry_run=dry_run) for item in adapters
+            result
+            for item in adapters
+            for result in reset_adapter(item, project_root(), dry_run=dry_run)
         ]
     except (OSError, ValueError) as exc:
         fail(str(exc))
@@ -119,19 +130,36 @@ def list_command(
 ) -> None:
     """List managed adapters and their global status."""
     command_options(ctx, quiet=quiet, json_output=json_output)
-    rows = []
+    rows: list[dict[str, Any]] = []
     for adapter in selected(None):
         config = managed_config_path(adapter, global_root())
-        rendered = adapter.rendered_path(global_root(), "global")
+        merged, _ = resolve_config(adapter, "global", project_root())
+        artifacts = adapter.artifacts("global")
+        paths = [
+            (
+                artifact,
+                adapter.native_path("global", project_root(), artifact),
+                adapter.native_path("global", project_root(), artifact)
+                if artifact.root == "share"
+                else adapter.rendered_path(global_root(), "global", artifact),
+                content_hash(adapter.render_artifact(artifact, merged.config, "global")),
+            )
+            for artifact in artifacts
+        ]
         native = adapter.global_native_path()
         rows.append(
             {
                 "agent": adapter.name,
                 "configured": config.exists(),
-                "rendered": rendered.exists(),
+                "rendered": all(rendered.exists() for _, _, rendered, _ in paths),
                 "native": str(native),
-                "in_sync": rendered.exists()
-                and file_hash(rendered) == file_hash(native),
+                "in_sync": all(
+                    rendered.exists()
+                    and native_path.exists()
+                    and file_hash(native_path) == expected_hash
+                    and (artifact.root == "share" or file_hash(rendered) == expected_hash)
+                    for artifact, native_path, rendered, expected_hash in paths
+                ),
             }
         )
     if options(ctx)["json"]:

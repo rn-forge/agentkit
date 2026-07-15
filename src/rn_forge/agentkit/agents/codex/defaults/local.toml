@@ -1,0 +1,2 @@
+# Repository-specific Codex overrides only.
+# Keep this file minimal and add settings here only when they must differ from ~/.codex/config.toml.
