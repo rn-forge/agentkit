@@ -22,14 +22,24 @@ agentkit = "rn_forge.agentkit:main"
 requires = ["uv_build>=0.11.28,<0.12.0"]
 build-backend = "uv_build"
 
+[tool.pyright]
+typeCheckingMode = "strict"
+ignore = ["tests"]
+reportMissingTypeStubs = false
+venvPath = "."
+venv = ".venv"
+
+[tool.pytest.ini_options]
+addopts = "-ra"
+
+[tool.ruff.lint.per-file-ignores]
+"**/tests/*" = ["ALL"]
+
 [tool.uv.build-backend]
 module-name = "rn_forge.agentkit"
 
 [tool.uv.sources]
 rn-forge-commons = { path = "../pykit/packages/rn-forge-commons" }
-
-[tool.pytest.ini_options]
-addopts = "-ra"
 
 [dependency-groups]
 dev = [
