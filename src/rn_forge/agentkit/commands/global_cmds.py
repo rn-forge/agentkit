@@ -30,6 +30,7 @@ from .common import (
     fail,
     options,
     selected,
+    warn_if_jq_missing,
 )
 
 app = typer.Typer(help="Manage user-wide agent configuration.", no_args_is_help=True)
@@ -52,6 +53,7 @@ def apply_command(
 ) -> None:
     """Render and sync global configuration."""
     command_options(ctx, quiet=quiet, json_output=json_output)
+    warn_if_jq_missing()
     try:
         overrides = parse_cli_overrides(set_value or [])
         results = [
@@ -142,7 +144,9 @@ def list_command(
                 adapter.native_path("global", project_root(), artifact)
                 if artifact.root == "share"
                 else adapter.rendered_path(global_root(), "global", artifact),
-                content_hash(adapter.render_artifact(artifact, merged.config, "global")),
+                content_hash(
+                    adapter.render_artifact(artifact, merged.config, "global")
+                ),
             )
             for artifact in artifacts
         ]
@@ -157,7 +161,9 @@ def list_command(
                     rendered.exists()
                     and native_path.exists()
                     and file_hash(native_path) == expected_hash
-                    and (artifact.root == "share" or file_hash(rendered) == expected_hash)
+                    and (
+                        artifact.root == "share" or file_hash(rendered) == expected_hash
+                    )
                     for artifact, native_path, rendered, expected_hash in paths
                 ),
             }

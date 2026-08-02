@@ -1,4 +1,3 @@
-model = "gpt-5.4"
 personality = "pragmatic"
 model_reasoning_effort = "medium"
 model_reasoning_summary = "concise"
@@ -9,8 +8,10 @@ sandbox_mode = "workspace-write"
 network_access = false
 
 [features]
-codex_hooks = true
+hooks = true
 
+# Safe only because the base workspace-write sandbox and disabled network carry over.
+# approval_policy = "never" bypasses publish/deploy approval prompts; the bash guard is the only backstop.
 [profiles.trusted]
 approval_policy = "never"
 

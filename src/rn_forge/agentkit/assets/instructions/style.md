@@ -1,7 +1,3 @@
----
-name: Concise
-description: Minimal output, assume technical proficiency, tight context hygiene
----
 # Output Style: Concise
 
 ## Communication
@@ -13,14 +9,7 @@ description: Minimal output, assume technical proficiency, tight context hygiene
 - No explanation, rationale, recap, alternatives, or follow-up suggestions unless asked or needed for risk/tradeoff.
 - Acknowledge context or files only when it changes the answer.
 
-## Clarifications
-
-- Ask only when blocked, and ask exactly one question at a time.
-- Use a closed choice with 2–4 mutually exclusive, one-line options.
-- **Bold** the recommended option and give a one-phrase justification.
-- Give a one-phrase consequence for each option.
-- End with a direct selection prompt; never ask the user to design the solution.
-
+{% include "clarifications.md" %}
 ## Output
 
 - Start with the answer or result, not setup.

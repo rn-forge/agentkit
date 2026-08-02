@@ -62,6 +62,23 @@ def test_diff_check_uses_exit_code_two(isolated_env) -> None:
     assert result.exit_code == 2
 
 
+def test_install_commands_warn_when_jq_is_missing(isolated_env, monkeypatch) -> None:
+    _, _, repo = isolated_env
+    monkeypatch.setattr(
+        "rn_forge.agentkit.commands.common.shutil.which", lambda _name: None
+    )
+
+    applied = runner.invoke(app, ["global", "apply", "--agent", "codex"])
+    initialized = runner.invoke(
+        app, ["project", "init", "--agent", "codex", "--repo", str(repo)]
+    )
+
+    assert applied.exit_code == 0, applied.output
+    assert initialized.exit_code == 0, initialized.output
+    assert "WARNING: jq is not installed" in applied.output
+    assert "WARNING: jq is not installed" in initialized.output
+
+
 def test_fresh_default_pack_installs_and_hook_commands_resolve(
     tmp_path: Path, monkeypatch
 ) -> None:
@@ -96,8 +113,9 @@ def test_fresh_default_pack_installs_and_hook_commands_resolve(
 
     codex_path = home / ".codex/config.toml"
     codex = tomlkit.loads(codex_path.read_text())
-    assert codex["model"] == "gpt-5.4"
-    assert tomlkit.loads(tomlkit.dumps(codex))["model"] == "gpt-5.4"
+    assert "model" not in codex
+    assert codex["personality"] == "pragmatic"
+    assert tomlkit.loads(tomlkit.dumps(codex))["features"]["hooks"] is True
 
 
 def _find_commands(value) -> list[str]:

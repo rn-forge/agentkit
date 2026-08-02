@@ -47,7 +47,7 @@ class ClaudeAdapter(AgentAdapter):
                     key="hooks/post-edit-format.sh",
                     native_relative=Path("hooks/claude/post-edit-format.sh"),
                     root="share",
-                    source=self._assets_dir / "hooks/post-edit-format.sh",
+                    source=self._shared_scripts_dir / "post-edit-format.sh",
                     executable=True,
                 ),
             ]
@@ -56,12 +56,12 @@ class ClaudeAdapter(AgentAdapter):
             Artifact(
                 "CLAUDE.md",
                 Path(".claude/CLAUDE.md"),
-                source=self._assets_dir / "CLAUDE.md",
+                template="CLAUDE.md.j2",
             ),
             Artifact(
                 "output-styles/concise.md",
                 Path(".claude/output-styles/concise.md"),
-                source=self._assets_dir / "output-styles/concise.md",
+                template="concise.md.j2",
             ),
             Artifact(
                 "hooks/lib/guard-core.sh",
@@ -82,7 +82,6 @@ class ClaudeAdapter(AgentAdapter):
                     "user-prompt-secret-guard.sh",
                     "pre-write-protect.sh",
                     "session-compact-context.sh",
-                    "post-edit-git-stage.sh",
                 )
             ],
         ]
@@ -95,12 +94,18 @@ class ClaudeAdapter(AgentAdapter):
     def _shared_scripts_dir(self) -> Path:
         return Path(__file__).parents[2] / "assets" / "scripts"
 
+    @property
+    def _shared_instructions_dir(self) -> Path:
+        return Path(__file__).parents[2] / "assets" / "instructions"
+
     def defaults(self, scope: Scope) -> dict[str, Any]:
         """Merge schema defaults with the packaged Claude scope defaults."""
         packaged = read_config(Path(__file__).parent / "defaults" / f"{scope}.json")
-        return ConfigMerger(self.schema()).merge(
-            defaults_for(self.schema()), packaged
-        ).config
+        return (
+            ConfigMerger(self.schema())
+            .merge(defaults_for(self.schema()), packaged)
+            .config
+        )
 
     def render(self, merged_config: dict[str, Any], *, scope: Scope = "global") -> str:
         """Validate and render merged settings as formatted JSON."""
@@ -119,6 +124,20 @@ class ClaudeAdapter(AgentAdapter):
             raise ValueError(f"Claude configuration root must be an object: {path}")
         return cast(dict[str, Any], value)
 
+    def render_artifact(
+        self, artifact: Artifact, merged_config: dict[str, Any], scope: Scope
+    ) -> str | bytes:
+        """Render shared instruction templates and delegate other artifacts."""
+        if artifact.key in {"CLAUDE.md", "output-styles/concise.md"}:
+            assert artifact.template is not None
+            return RenderEngine(self._shared_instructions_dir).render_template(
+                artifact.template, {}
+            )
+        return super().render_artifact(artifact, merged_config, scope)
+
     def template_errors(self) -> list[str]:
         """Return Claude template compilation errors."""
-        return RenderEngine(self.template_dir).validate_templates()
+        return [
+            *RenderEngine(self.template_dir).validate_templates(),
+            *RenderEngine(self._shared_instructions_dir).validate_templates(),
+        ]

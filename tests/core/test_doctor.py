@@ -20,3 +20,23 @@ def test_doctor_detects_native_drift_and_orphans(isolated_env) -> None:
     assert any(
         item.check == "orphan" and "old.toml" in item.message for item in results
     )
+
+
+def test_doctor_reports_hook_dependencies(isolated_env, monkeypatch) -> None:
+    _, _, repo = isolated_env
+    monkeypatch.setattr(
+        "rn_forge.agentkit.core.doctor.shutil.which", lambda _name: None
+    )
+
+    results = check_agent(CodexAdapter(), "global", repo, global_root())
+
+    assert any(
+        item.status == "error" and item.check == "dependency" and "jq" in item.message
+        for item in results
+    )
+    assert any(
+        item.status == "warning"
+        and item.check == "dependency"
+        and "gitleaks" in item.message
+        for item in results
+    )

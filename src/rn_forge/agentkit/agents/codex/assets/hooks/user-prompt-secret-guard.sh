@@ -1,17 +1,17 @@
 #!/usr/bin/env bash
 # agentkit: Codex prompt-secret guard adapter. Requires: jq
 
-command -v jq >/dev/null 2>&1 || {
-  printf '{"decision":"block","reason":"jq not found"}\n'
-  exit 0
-}
+LIB="${0%/*}/../lib/guard-core.sh"
+[ -f "$LIB" ] || { echo "BLOCKED [user-prompt-secret-guard]: guard library missing. Re-run agentkit global apply." >&2; exit 2; }
+# shellcheck source=/dev/null
+. "$LIB"
+
+guard_require_jq_json "user-prompt-secret-guard" warn
 
 INPUT=$(cat)
 PROMPT=$(printf '%s' "$INPUT" | jq -r '.prompt // ""')
-. "$(dirname "$0")/../lib/guard-core.sh"
 
 if REASON=$(guard_check_prompt_secrets "$PROMPT"); then
   exit 0
 fi
-jq -cn --arg reason "$REASON" '{decision:"block",reason:$reason}'
-exit 0
+guard_emit_json_block "$REASON"

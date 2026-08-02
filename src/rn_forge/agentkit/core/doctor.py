@@ -119,9 +119,7 @@ def check_agent(
             )
         else:
             results.append(
-                CheckResult(
-                    "ok", adapter.name, "drift", f"{artifact.key} has no drift"
-                )
+                CheckResult("ok", adapter.name, "drift", f"{artifact.key} has no drift")
             )
 
     if rendered_root.exists():
@@ -170,6 +168,29 @@ def check_agent(
                     f"optional binary not found: {adapter.binary_name}",
                 )
             )
+
+    if shutil.which("jq"):
+        results.append(CheckResult("ok", adapter.name, "dependency", "jq"))
+    else:
+        results.append(
+            CheckResult(
+                "error",
+                adapter.name,
+                "dependency",
+                "required safety-hook dependency not found: jq",
+            )
+        )
+    if shutil.which("gitleaks"):
+        results.append(CheckResult("ok", adapter.name, "dependency", "gitleaks"))
+    else:
+        results.append(
+            CheckResult(
+                "warning",
+                adapter.name,
+                "dependency",
+                "recommended secret-scanning dependency not found: gitleaks",
+            )
+        )
 
     state = StateStore(scope_root)
     for stale in state.stale_entries():

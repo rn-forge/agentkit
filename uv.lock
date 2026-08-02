@@ -576,6 +576,7 @@ provides-extras = ["coloredlogs", "excel", "otel", "pandas", "testing", "all"]
 [package.metadata.requires-dev]
 dev = [
     { name = "assertpy", specifier = ">=1.1" },
+    { name = "pandas-stubs", specifier = ">=3.0.5" },
     { name = "pyright", specifier = ">=1.1.411" },
     { name = "pytest", specifier = ">=9.1.1" },
     { name = "pytest-cov", specifier = ">=7.1.0" },

@@ -7,6 +7,7 @@ Rich, and machine-readable output behavior consistent.
 from __future__ import annotations
 
 import json
+import shutil
 from dataclasses import asdict, is_dataclass
 from pathlib import Path
 from typing import Any, NoReturn, cast
@@ -89,6 +90,16 @@ def fail(message: str) -> NoReturn:
     """Print a consistent error and terminate the current command."""
     console.print(f"[red]error:[/red] {message}", highlight=False)
     raise typer.Exit(1)
+
+
+def warn_if_jq_missing() -> None:
+    """Warn before installing assets whose safety hooks require jq."""
+    if shutil.which("jq") is None:
+        typer.echo(
+            "WARNING: jq is not installed; agentkit safety hooks require it. "
+            "Install jq before using the managed agent configuration.",
+            err=True,
+        )
 
 
 def _jsonable(value: Any) -> Any:

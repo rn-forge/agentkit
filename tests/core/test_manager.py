@@ -75,7 +75,8 @@ def test_sync_backs_up_drift_and_reset_restores_defaults(isolated_env) -> None:
 
     reset = reset_adapter(adapter, repo)[0]
     assert reset.backup_path is not None
-    assert 'model = "gpt-5.4"' in native.read_text()
-    assert 'model = "gpt-5.4"' in managed_config_path(
-        adapter, global_root()
-    ).read_text()
+    assert "model =" not in native.read_text()
+    assert 'personality = "pragmatic"' in native.read_text()
+    managed = managed_config_path(adapter, global_root()).read_text()
+    assert "model =" not in managed
+    assert 'personality = "pragmatic"' in managed

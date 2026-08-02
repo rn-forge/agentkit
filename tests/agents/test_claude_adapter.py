@@ -1,4 +1,5 @@
 import json
+from pathlib import Path
 
 from rn_forge.agentkit.agents.claude import ClaudeAdapter
 
@@ -29,7 +30,6 @@ def test_claude_artifacts_and_scope_defaults() -> None:
         "hooks/user-prompt-secret-guard.sh",
         "hooks/pre-write-protect.sh",
         "hooks/session-compact-context.sh",
-        "hooks/post-edit-git-stage.sh",
     ]
     assert [artifact.key for artifact in adapter.artifacts("local")] == [
         "config",
@@ -38,3 +38,47 @@ def test_claude_artifacts_and_scope_defaults() -> None:
     assert adapter.defaults("global")["outputStyle"] == "concise"
     assert "deny" in adapter.defaults("global")["permissions"]
     assert adapter.defaults("local")["permissions"]["deny"] == []
+    local_permissions = adapter.defaults("local")["permissions"]
+    assert "Bash" not in local_permissions["allow"]
+    assert "MultiEdit" not in local_permissions["allow"]
+    assert "Bash(git status:*)" in local_permissions["allow"]
+    assert "Bash(gh pr create:*)" in local_permissions["ask"]
+    global_defaults = adapter.defaults("global")
+    assert "PostCompact" not in global_defaults["hooks"]
+    assert {
+        "Read(**/.kube/config)",
+        "Read(**/*.p12)",
+        "Read(**/*.pfx)",
+        "Read(**/*.gpg)",
+        "Read(**/*.asc)",
+        "Read(**/service-account*.json)",
+        "Read(**/.ssh/**)",
+        "Read(**/.aws/**)",
+    } <= set(global_defaults["permissions"]["deny"])
+    assert all(
+        hook["statusMessage"]
+        for groups in global_defaults["hooks"].values()
+        for group in groups
+        for hook in group["hooks"]
+    )
+
+
+def test_claude_instruction_snapshots_match_shared_templates() -> None:
+    adapter = ClaudeAdapter()
+    assets = Path("src/rn_forge/agentkit/agents/claude/assets")
+    for key, snapshot in (
+        ("CLAUDE.md", assets / "CLAUDE.md"),
+        ("output-styles/concise.md", assets / "output-styles/concise.md"),
+    ):
+        artifact = next(item for item in adapter.artifacts("global") if item.key == key)
+        rendered = adapter.render_artifact(artifact, {}, "global")
+        assert isinstance(rendered, str)
+        assert rendered.encode() == snapshot.read_bytes()
+
+
+def test_claude_defaults_render_and_validate_for_both_scopes() -> None:
+    adapter = ClaudeAdapter()
+    for scope in ("global", "local"):
+        defaults = adapter.defaults(scope)
+        assert adapter.validate(defaults) == []
+        assert isinstance(json.loads(adapter.render(defaults, scope=scope)), dict)

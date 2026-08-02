@@ -1,7 +1,7 @@
 """Implement Codex TOML rendering and default-pack artifacts.
 
 The adapter combines the Codex schema, packaged scope defaults, Jinja TOML
-templates, native ``.codex`` paths, shared hooks, and a bundled skill.
+templates, native ``.codex`` paths, and shared hooks.
 """
 
 from __future__ import annotations
@@ -32,20 +32,34 @@ class CodexAdapter(AgentAdapter):
         return CodexConfig
 
     def artifacts(self, scope: Scope) -> list[Artifact]:
-        """Declare Codex config, instruction, hook, and skill artifacts."""
+        """Declare Codex config, instruction, and hook artifacts."""
         config = Artifact(
             key="config",
             native_relative=Path(".codex") / "config.toml",
             template=f"{scope}.j2",
         )
         if scope == "local":
-            return [config]
+            return [
+                config,
+                Artifact(
+                    "hooks.json",
+                    Path(".codex/hooks.json"),
+                    source=self._assets_dir / "hooks.local.json",
+                ),
+                Artifact(
+                    key="hooks/post-edit-format.sh",
+                    native_relative=Path("hooks/codex/post-edit-format.sh"),
+                    root="share",
+                    source=self._shared_scripts_dir / "post-edit-format.sh",
+                    executable=True,
+                ),
+            ]
         return [
             config,
             Artifact(
                 "AGENTS.md",
                 Path(".codex/AGENTS.md"),
-                source=self._assets_dir / "AGENTS.md",
+                template="AGENTS.md.j2",
             ),
             Artifact(
                 "hooks.json",
@@ -69,19 +83,9 @@ class CodexAdapter(AgentAdapter):
                 for name in (
                     "pre-bash-guard.sh",
                     "user-prompt-secret-guard.sh",
+                    "pre-write-protect.sh",
                 )
             ],
-            Artifact(
-                "skills/repo-context/SKILL.md",
-                Path(".codex/skills/repo-context/SKILL.md"),
-                source=self._assets_dir / "skills/repo-context/SKILL.md",
-            ),
-            Artifact(
-                "skills/repo-context/agents/openai.yaml",
-                Path(".codex/skills/repo-context/agents/openai.yaml"),
-                source=self._assets_dir
-                / "skills/repo-context/agents/openai.yaml",
-            ),
         ]
 
     @property
@@ -92,12 +96,18 @@ class CodexAdapter(AgentAdapter):
     def _shared_scripts_dir(self) -> Path:
         return Path(__file__).parents[2] / "assets" / "scripts"
 
+    @property
+    def _shared_instructions_dir(self) -> Path:
+        return Path(__file__).parents[2] / "assets" / "instructions"
+
     def defaults(self, scope: Scope) -> dict[str, Any]:
         """Merge schema defaults with the packaged Codex scope defaults."""
         packaged = read_config(Path(__file__).parent / "defaults" / f"{scope}.toml")
-        return ConfigMerger(self.schema()).merge(
-            defaults_for(self.schema()), packaged
-        ).config
+        return (
+            ConfigMerger(self.schema())
+            .merge(defaults_for(self.schema()), packaged)
+            .config
+        )
 
     def render(self, merged_config: dict[str, Any], *, scope: Scope = "global") -> str:
         """Validate and render merged configuration as TOML."""
@@ -114,6 +124,20 @@ class CodexAdapter(AgentAdapter):
         """Parse a Codex TOML file into a plain mapping."""
         return read_config(path)
 
+    def render_artifact(
+        self, artifact: Artifact, merged_config: dict[str, Any], scope: Scope
+    ) -> str | bytes:
+        """Render shared instruction templates and delegate other artifacts."""
+        if artifact.key == "AGENTS.md":
+            assert artifact.template is not None
+            return RenderEngine(self._shared_instructions_dir).render_template(
+                artifact.template, {}
+            )
+        return super().render_artifact(artifact, merged_config, scope)
+
     def template_errors(self) -> list[str]:
         """Return Codex template compilation errors."""
-        return RenderEngine(self.template_dir).validate_templates()
+        return [
+            *RenderEngine(self.template_dir).validate_templates(),
+            *RenderEngine(self._shared_instructions_dir).validate_templates(),
+        ]

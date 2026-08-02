@@ -15,13 +15,21 @@
       "Read(**/.env.*)",
       "Read(**/*.pem)",
       "Read(**/*.key)",
+      "Read(**/*.p12)",
+      "Read(**/*.pfx)",
+      "Read(**/*.gpg)",
+      "Read(**/*.asc)",
       "Read(**/id_rsa*)",
       "Read(**/id_ed25519*)",
       "Read(**/credentials)",
       "Read(**/credentials.json)",
+      "Read(**/service-account*.json)",
       "Read(**/.netrc)",
       "Read(**/.npmrc)",
       "Read(**/.pypirc)",
+      "Read(**/.kube/config)",
+      "Read(**/.ssh/**)",
+      "Read(**/.aws/**)",
       "Read(**/*.tfstate)",
       "Read(**/*.tfvars)"
     ]
@@ -32,7 +40,8 @@
         "hooks": [
           {
             "type": "command",
-            "command": "$HOME/.rn-forge/share/agentkit/hooks/claude/user-prompt-secret-guard.sh"
+            "command": "$HOME/.rn-forge/share/agentkit/hooks/claude/user-prompt-secret-guard.sh",
+            "statusMessage": "Checking prompt"
           }
         ]
       }
@@ -43,7 +52,8 @@
         "hooks": [
           {
             "type": "command",
-            "command": "$HOME/.rn-forge/share/agentkit/hooks/claude/pre-bash-guard.sh"
+            "command": "$HOME/.rn-forge/share/agentkit/hooks/claude/pre-bash-guard.sh",
+            "statusMessage": "Checking command"
           }
         ]
       },
@@ -52,7 +62,8 @@
         "hooks": [
           {
             "type": "command",
-            "command": "$HOME/.rn-forge/share/agentkit/hooks/claude/pre-write-protect.sh"
+            "command": "$HOME/.rn-forge/share/agentkit/hooks/claude/pre-write-protect.sh",
+            "statusMessage": "Checking protected path"
           }
         ]
       }
@@ -63,17 +74,8 @@
         "hooks": [
           {
             "type": "command",
-            "command": "$HOME/.rn-forge/share/agentkit/hooks/claude/session-compact-context.sh"
-          }
-        ]
-      }
-    ],
-    "PostCompact": [
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "$HOME/.rn-forge/share/agentkit/hooks/claude/session-compact-context.sh"
+            "command": "$HOME/.rn-forge/share/agentkit/hooks/claude/session-compact-context.sh",
+            "statusMessage": "Restoring compacted context"
           }
         ]
       }

@@ -31,6 +31,7 @@ from .common import (
     fail,
     options,
     selected,
+    warn_if_jq_missing,
 )
 
 app = typer.Typer(
@@ -53,6 +54,7 @@ def init_command(
 ) -> None:
     """Scaffold rn-forge agentkit sources in a repository."""
     command_options(ctx, quiet=quiet, json_output=json_output)
+    warn_if_jq_missing()
     root = project_root(repo)
     try:
         results = [

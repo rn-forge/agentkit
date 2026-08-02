@@ -21,6 +21,16 @@
             "statusMessage": "Checking command"
           }
         ]
+      },
+      {
+        "matcher": "Edit|Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "$HOME/.rn-forge/share/agentkit/hooks/codex/pre-write-protect.sh",
+            "statusMessage": "Checking protected path"
+          }
+        ]
       }
     ]
   }

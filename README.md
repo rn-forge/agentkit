@@ -28,6 +28,16 @@ uv sync --group dev
 uv run agentkit --help
 ```
 
+### External dependencies
+
+| Tool | Status | Used for |
+| --- | --- | --- |
+| `jq` | **Required** | Every hook parses its JSON event payload with `jq`. `global apply` and `project init` warn when it is missing, and `doctor` reports it as an error. `PreToolUse` guards fail closed (exit 2) without it; `UserPromptSubmit` guards fail open so a session stays usable. |
+| `gitleaks` | Recommended | Prompt-secret scanning uses `gitleaks stdin` when present and falls back to the built-in regex set otherwise. `doctor` reports it as a warning. |
+
+Formatter binaries (`ruff`, `npx`/`prettier`, `google-java-format`, `shfmt`) are
+optional — the post-edit hook skips any branch whose tool is not installed.
+
 ## Configuration model
 
 Values resolve in increasing precedence:
@@ -63,19 +73,36 @@ The default global scope root is `~/.rn-forge/share/agentkit`; a repository uses
 
 | Agent | Native agent files | Shared executable hooks |
 | --- | --- | --- |
-| Claude | `~/.claude/settings.json`, `~/.claude/CLAUDE.md`, `~/.claude/output-styles/concise.md` | `hooks/claude/pre-bash-guard.sh`, `user-prompt-secret-guard.sh`, `pre-write-protect.sh`, `session-compact-context.sh`, `post-edit-git-stage.sh` |
-| Codex | `~/.codex/config.toml`, `~/.codex/AGENTS.md`, `~/.codex/hooks.json`, `~/.codex/skills/repo-context/SKILL.md`, `agents/openai.yaml` | `hooks/codex/pre-bash-guard.sh`, `user-prompt-secret-guard.sh` |
+| Claude | `~/.claude/settings.json`, `~/.claude/CLAUDE.md`, `~/.claude/output-styles/concise.md` | `hooks/claude/pre-bash-guard.sh`, `user-prompt-secret-guard.sh`, `pre-write-protect.sh`, `session-compact-context.sh` |
+| Codex | `~/.codex/config.toml`, `~/.codex/AGENTS.md`, `~/.codex/hooks.json` | `hooks/codex/pre-bash-guard.sh`, `user-prompt-secret-guard.sh`, `pre-write-protect.sh` |
 
 Both adapters declare the shared `hooks/lib/guard-core.sh`. The shared library
-contains the common destructive-command and prompt-secret checks; thin adapters
+contains the common destructive-command, sensitive-path, and prompt-secret checks; thin adapters
 emit Claude's stderr/exit-2 or Codex's JSON/exit-0 blocking dialect.
+
+The branch-protection guard blocks force pushes and pushes to protected
+branches. `AGENTKIT_PROTECTED_BRANCHES` overrides the default `main|master`
+pattern (the legacy `CLAUDE_PROTECTED_BRANCHES` is still honored as a fallback).
+
+Instruction files are single-sourced: `~/.claude/CLAUDE.md`, `~/.codex/AGENTS.md`,
+and `~/.claude/output-styles/concise.md` all render from the shared partials in
+`src/rn_forge/agentkit/assets/instructions/`, so the two agents cannot drift
+apart. Adapter tests assert each rendered file byte-matches its packaged
+snapshot.
+
+Intentional hook parity exclusions:
+
+- Codex has no built-in read-tool matcher, so it cannot mirror Claude's
+  secret-read denials. Its write guard still protects sensitive in-repo paths.
+- Compaction context injection remains Claude-only because Codex has no
+  equivalent context-injection behavior for this asset pack.
 
 Project initialization and update install:
 
 | Agent | Native agent files | Shared executable hooks |
 | --- | --- | --- |
 | Claude | `<repo>/.claude/settings.local.json` | `<repo>/.rn-forge/agentkit/hooks/claude/post-edit-format.sh` |
-| Codex | `<repo>/.codex/config.toml` | — |
+| Codex | `<repo>/.codex/config.toml`, `<repo>/.codex/hooks.json` | `<repo>/.rn-forge/agentkit/hooks/codex/post-edit-format.sh` |
 
 ## Use
 
@@ -109,7 +136,7 @@ Global commands are `apply`, `sync`, `reset`, and `list`. Project commands are
 | Folder | Purpose |
 | --- | --- |
 | `src/rn_forge/agentkit/agents/` | Adapter interface, registry, built-in schemas, defaults, templates, and discovery-by-location assets |
-| `src/rn_forge/agentkit/assets/hooks/` | Shared guard library and per-agent hook scripts |
+| `src/rn_forge/agentkit/assets/` | Shared guard library and instruction partials |
 | `src/rn_forge/agentkit/core/` | Artifacts, paths, merge, render, I/O, state, diff, doctor, and manager services |
 | `src/rn_forge/agentkit/commands/` | Typer global, project, and root command groups |
 | `tests/` | Isolated tests mirroring the source tree; fake `HOME` and `RNF_HOME` are provided by `conftest.py` |
