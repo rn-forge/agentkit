@@ -101,7 +101,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "$CLAUDE_PROJECT_DIR/.rn-forge/agentkit/hooks/claude/post-edit-format.sh",
+            "command": "$CLAUDE_PROJECT_DIR/.rn-forge/agentkit/claude/hooks/post-edit-format.sh",
             "statusMessage": "Formatting edited file"
           }
         ]

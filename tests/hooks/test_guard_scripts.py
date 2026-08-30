@@ -276,7 +276,7 @@ def test_missing_guard_library_has_clear_failure(
     _, rnf, repo = isolated_env
     apply_adapter(ClaudeAdapter(), "global", repo)
     apply_adapter(CodexAdapter(), "global", repo)
-    (rnf / "share/agentkit/hooks/lib/guard-core.sh").unlink()
+    (rnf / "share/agentkit/_common/hooks/guard-core.sh").unlink()
     payload = (
         {"prompt": "hello"}
         if script.startswith("user-prompt")
@@ -295,18 +295,63 @@ def test_missing_guard_library_has_clear_failure(
     assert "guard library missing" in result.stderr
 
 
-@pytest.mark.skipif(shutil.which("gitleaks") is None, reason="gitleaks not installed")
-def test_prompt_secret_guard_uses_gitleaks_when_available(isolated_env) -> None:
+def test_prompt_secret_guard_keeps_regex_coverage_with_gitleaks(
+    isolated_env, tmp_path: Path
+) -> None:
     _, rnf, repo = isolated_env
     apply_adapter(ClaudeAdapter(), "global", repo)
     apply_adapter(CodexAdapter(), "global", repo)
+    env = os.environ.copy()
+    env["PATH"] = _fake_gitleaks_path(tmp_path, output="no leaks found", exit_code=0)
     payload = {"prompt": "AWS key: AKIAIOSFODNN7EXAMPLE"}
 
-    claude = _run(rnf, "claude", "user-prompt-secret-guard.sh", payload, cwd=repo)
-    codex = _run(rnf, "codex", "user-prompt-secret-guard.sh", payload, cwd=repo)
+    claude = _run(
+        rnf, "claude", "user-prompt-secret-guard.sh", payload, cwd=repo, env=env
+    )
+    codex = _run(
+        rnf, "codex", "user-prompt-secret-guard.sh", payload, cwd=repo, env=env
+    )
 
     assert claude.returncode == 2
+    assert "AWS access key" in claude.stderr
     assert json.loads(codex.stdout)["decision"] == "block"
+    assert "AWS access key" in json.loads(codex.stdout)["reason"]
+
+
+@pytest.mark.skipif(shutil.which("gitleaks") is None, reason="gitleaks not installed")
+def test_prompt_secret_guard_reports_gitleaks_detection(isolated_env) -> None:
+    _, rnf, repo = isolated_env
+    apply_adapter(ClaudeAdapter(), "global", repo)
+    payload = {"prompt": "use ghp_016C7e42F292c6912E7710c838347Ae178B4a"}
+
+    result = _run(rnf, "claude", "user-prompt-secret-guard.sh", payload, cwd=repo)
+
+    assert result.returncode == 2
+    assert "secret detected by gitleaks" in result.stderr
+
+
+def test_prompt_secret_guard_reports_gitleaks_execution_error(
+    isolated_env, tmp_path: Path
+) -> None:
+    _, rnf, repo = isolated_env
+    apply_adapter(ClaudeAdapter(), "global", repo)
+    env = os.environ.copy()
+    env["PATH"] = _fake_gitleaks_path(
+        tmp_path, output="fatal: invalid configuration", exit_code=1
+    )
+
+    result = _run(
+        rnf,
+        "claude",
+        "user-prompt-secret-guard.sh",
+        {"prompt": "hello"},
+        cwd=repo,
+        env=env,
+    )
+
+    assert result.returncode == 2
+    assert "gitleaks could not run" in result.stderr
+    assert "secret detected by gitleaks" not in result.stderr
 
 
 @pytest.mark.parametrize(
@@ -411,8 +456,8 @@ def _run(
     env: dict[str, str] | None = None,
     local: bool = False,
 ) -> subprocess.CompletedProcess:
-    hooks = rnf / "hooks" if local else rnf / "share" / "agentkit" / "hooks"
-    path = hooks / agent / script
+    scope_root = rnf if local else rnf / "share" / "agentkit"
+    path = scope_root / agent / "hooks" / script
     return subprocess.run(
         [path],
         input=json.dumps(payload),
@@ -426,6 +471,15 @@ def _run(
 
 def _path_without_gitleaks(tmp_path: Path) -> str:
     return _tool_path(tmp_path, ("bash", "cat", "dirname", "grep", "jq"))
+
+
+def _fake_gitleaks_path(tmp_path: Path, *, output: str, exit_code: int) -> str:
+    bin_dir = Path(_path_without_gitleaks(tmp_path))
+    script = f"#!/bin/sh\nprintf '%s\\n' '{output}' >&2\nexit {exit_code}\n"
+    path = bin_dir / "gitleaks"
+    path.write_text(script)
+    path.chmod(0o755)
+    return str(bin_dir)
 
 
 def _tool_path(tmp_path: Path, names: tuple[str, ...]) -> str:

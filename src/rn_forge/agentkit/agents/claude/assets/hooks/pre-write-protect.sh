@@ -3,7 +3,7 @@
 # Blocks writes/edits to sensitive files. Requires: jq
 # Exit 2 = block. Exit 0 = allow.
 
-LIB="${0%/*}/../lib/guard-core.sh"
+LIB="${0%/*}/../../_common/hooks/guard-core.sh"
 [ -f "$LIB" ] || { echo "BLOCKED [pre-write-protect]: guard library missing. Re-run agentkit global apply." >&2; exit 2; }
 # shellcheck source=/dev/null
 . "$LIB"

@@ -24,20 +24,31 @@ def test_codex_render_and_parse(tmp_path) -> None:
 
 def test_codex_artifacts_and_scope_defaults() -> None:
     adapter = CodexAdapter()
-    assert [artifact.key for artifact in adapter.artifacts("global")] == [
+    global_keys = [artifact.key for artifact in adapter.artifacts("global")]
+    assert global_keys[:7] == [
         "config",
         "AGENTS.md",
         "hooks.json",
-        "hooks/lib/guard-core.sh",
+        "hooks/guard-core.sh",
         "hooks/pre-bash-guard.sh",
         "hooks/user-prompt-secret-guard.sh",
         "hooks/pre-write-protect.sh",
     ]
+    assert all(key.startswith("skills/") for key in global_keys[7:])
+    assert "skills/sonar-cleanup/SKILL.md" in global_keys
     assert [artifact.key for artifact in adapter.artifacts("local")] == [
         "config",
+        "AGENTS.md",
         "hooks.json",
         "hooks/post-edit-format.sh",
     ]
+    seed = next(
+        artifact
+        for artifact in adapter.artifacts("local")
+        if artifact.key == "AGENTS.md"
+    )
+    assert seed.seed_only
+    assert seed.native_relative == Path("AGENTS.md")
     assert "model" not in adapter.defaults("global")
     assert adapter.defaults("global")["personality"] == "pragmatic"
     assert adapter.defaults("global")["features"]["hooks"] is True

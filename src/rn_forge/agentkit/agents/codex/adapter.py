@@ -42,13 +42,19 @@ class CodexAdapter(AgentAdapter):
             return [
                 config,
                 Artifact(
+                    "AGENTS.md",
+                    Path("AGENTS.md"),
+                    template="AGENTS.local.md.j2",
+                    seed_only=True,
+                ),
+                Artifact(
                     "hooks.json",
                     Path(".codex/hooks.json"),
                     source=self._assets_dir / "hooks.local.json",
                 ),
                 Artifact(
                     key="hooks/post-edit-format.sh",
-                    native_relative=Path("hooks/codex/post-edit-format.sh"),
+                    native_relative=Path("codex/hooks/post-edit-format.sh"),
                     root="share",
                     source=self._shared_scripts_dir / "post-edit-format.sh",
                     executable=True,
@@ -67,15 +73,15 @@ class CodexAdapter(AgentAdapter):
                 source=self._assets_dir / "hooks.json",
             ),
             Artifact(
-                "hooks/lib/guard-core.sh",
-                Path("hooks/lib/guard-core.sh"),
+                "hooks/guard-core.sh",
+                Path("_common/hooks/guard-core.sh"),
                 root="share",
                 source=self._shared_scripts_dir / "guard-core.sh",
             ),
             *[
                 Artifact(
                     f"hooks/{name}",
-                    Path("hooks/codex") / name,
+                    Path("codex/hooks") / name,
                     root="share",
                     source=self._assets_dir / "hooks" / name,
                     executable=True,
@@ -86,7 +92,10 @@ class CodexAdapter(AgentAdapter):
                     "pre-write-protect.sh",
                 )
             ],
+            *self.skill_artifacts(self._skills_dir),
         ]
+
+    _skills_dir = Path(".codex/skills")
 
     @property
     def _assets_dir(self) -> Path:
@@ -128,6 +137,8 @@ class CodexAdapter(AgentAdapter):
         self, artifact: Artifact, merged_config: dict[str, Any], scope: Scope
     ) -> str | bytes:
         """Render shared instruction templates and delegate other artifacts."""
+        if artifact.key.startswith("skills/") and artifact.template is not None:
+            return self.render_skill_artifact(artifact)
         if artifact.key == "AGENTS.md":
             assert artifact.template is not None
             return RenderEngine(self._shared_instructions_dir).render_template(
@@ -140,4 +151,5 @@ class CodexAdapter(AgentAdapter):
         return [
             *RenderEngine(self.template_dir).validate_templates(),
             *RenderEngine(self._shared_instructions_dir).validate_templates(),
+            *self.skill_template_errors(self._skills_dir),
         ]

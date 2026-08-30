@@ -1,0 +1,13 @@
+version: "3"
+
+tasks:
+  install:
+    desc: Sync the Python workspace (every package, locked).
+    internal: true
+    cmds:
+      - __PY_SYNC_CMD__
+
+  dev:
+    desc: Run the backend dev server (reload on).
+    cmds:
+      - __PY_DEV_CMD__

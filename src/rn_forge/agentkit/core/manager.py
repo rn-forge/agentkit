@@ -9,13 +9,13 @@ from __future__ import annotations
 import os
 from dataclasses import dataclass, replace
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 from ..agents.base import AgentAdapter, Scope
 from .artifacts import Artifact
-from .config import MergeResult
+from .config import ConfigMerger, MergeResult
 from .diff import unified_diff
-from .io import atomic_write, read_config, write_config
+from .io import atomic_write, read_config, update_config, write_config
 from .paths import global_root, project_scope_root
 from .state import StateStore, backup_file, content_hash, file_hash
 
@@ -102,6 +102,8 @@ def apply_adapter(
     errors = adapter.validate(merged.config)
     if errors:
         raise ValueError("; ".join(errors))
+    if not dry_run:
+        scaffold_managed_source(adapter, scope_root(scope, repo_root), scope)
     return _apply_resolved(
         adapter, scope, repo_root, merged, action="apply", dry_run=dry_run
     )
@@ -125,6 +127,9 @@ def sync_adapter(
     for artifact in adapter.artifacts(scope):
         native = adapter.native_path(scope, repo_root, artifact)
         rendered = _managed_copy_path(adapter, root, scope, artifact, native)
+        if artifact.seed_only and native.is_file():
+            results.append(_seeded_result(adapter, artifact, "sync", native, rendered))
+            continue
         if not rendered.is_file():
             raise FileNotFoundError(
                 f"No rendered artifact for {adapter.name}/{artifact.key}: {rendered}"
@@ -231,7 +236,7 @@ def init_adapter(
             message="already initialized",
         )
     if not dry_run:
-        write_config(config_path, {})
+        scaffold_managed_source(adapter, root, "local")
     return OperationResult(
         adapter.name,
         artifact.key,
@@ -241,6 +246,144 @@ def init_adapter(
         rendered,
         message="dry-run" if dry_run else "initialized",
     )
+
+
+_MANAGED_SOURCE_HEADER = """\
+# agentkit managed source — {agent}, {scope} scope.
+#
+# Keys set here override the packaged {scope} defaults and are merged into every
+# rendered {agent} artifact. This file is the layer you edit by hand; it is also
+# where `agentkit diff --scope {scope} --write` captures native changes.
+#
+# An empty file means "no {scope} overrides" — the packaged defaults apply as-is.
+"""
+
+
+def scaffold_managed_source(adapter: AgentAdapter, root: Path, scope: Scope) -> bool:
+    """Create a documented empty managed source when the scope has none.
+
+    Returns:
+        ``True`` when a new file was written.
+    """
+    config_path = managed_config_path(adapter, root)
+    if config_path.exists():
+        return False
+    atomic_write(
+        config_path, _MANAGED_SOURCE_HEADER.format(agent=adapter.name, scope=scope)
+    )
+    return True
+
+
+def capture_adapter(
+    adapter: AgentAdapter,
+    scope: Scope,
+    repo_root: Path,
+) -> OperationResult:
+    """Capture structural native-config additions and changes into managed source.
+
+    Append-merged lists capture only a suffix added to the rendered value. Key
+    removals and destructive edits to append-merged lists cannot be represented
+    by the current layered merge model and are rejected.
+
+    Raises:
+        FileNotFoundError: The native or rendered primary config is missing.
+        ValueError: Native config is invalid or contains an unsupported removal.
+    """
+    root = scope_root(scope, repo_root)
+    artifact = adapter.primary_artifact(scope)
+    native = adapter.native_path(scope, repo_root, artifact)
+    rendered = _managed_copy_path(adapter, root, scope, artifact, native)
+    if not native.is_file():
+        raise FileNotFoundError(f"Native config does not exist: {native}")
+    if not rendered.is_file():
+        raise FileNotFoundError(
+            f"No rendered config for {adapter.name}; run the scope's apply/update command first"
+        )
+
+    expected = adapter.parse_native(rendered)
+    actual = adapter.parse_native(native)
+    errors = adapter.validate(actual)
+    if errors:
+        raise ValueError("; ".join(errors))
+
+    source = managed_config_path(adapter, root)
+    managed = read_config(source, missing_ok=True)
+    updates, unsupported = _capture_updates(
+        expected,
+        actual,
+        managed,
+        ConfigMerger(adapter.schema()).append_paths,
+    )
+    if unsupported:
+        paths = ", ".join(sorted(unsupported))
+        raise ValueError(
+            "Cannot capture removals or destructive append-list edits: " + paths
+        )
+    if updates:
+        update_config(source, updates)
+    return OperationResult(
+        adapter.name,
+        artifact.key,
+        "capture",
+        bool(updates),
+        native,
+        rendered,
+        message="captured" if updates else "unchanged",
+    )
+
+
+def _capture_updates(
+    expected: dict[str, Any],
+    actual: dict[str, Any],
+    managed: dict[str, Any],
+    append_paths: set[str],
+    prefix: str = "",
+) -> tuple[dict[str, Any], list[str]]:
+    """Return a managed-layer update that represents native structural drift."""
+    updates: dict[str, Any] = {}
+    unsupported: list[str] = []
+    keys = [*actual, *(key for key in expected if key not in actual)]
+    for key in keys:
+        path = f"{prefix}.{key}" if prefix else key
+        if key not in actual:
+            unsupported.append(path)
+            continue
+        if key not in expected:
+            updates[key] = actual[key]
+            continue
+        before = expected[key]
+        after = actual[key]
+        if before == after:
+            continue
+        current = managed.get(key)
+        if isinstance(before, dict) and isinstance(after, dict):
+            nested, rejected = _capture_updates(
+                cast(dict[str, Any], before),
+                cast(dict[str, Any], after),
+                cast(dict[str, Any], current) if isinstance(current, dict) else {},
+                append_paths,
+                path,
+            )
+            if nested:
+                updates[key] = nested
+            unsupported.extend(rejected)
+        elif (
+            path in append_paths
+            and isinstance(before, list)
+            and isinstance(after, list)
+        ):
+            before_list = cast(list[Any], before)
+            after_list = cast(list[Any], after)
+            if after_list[: len(before_list)] != before_list:
+                unsupported.append(path)
+                continue
+            additions = after_list[len(before_list) :]
+            if additions:
+                existing = cast(list[Any], current) if isinstance(current, list) else []
+                updates[key] = [*existing, *additions]
+        else:
+            updates[key] = after
+    return updates, unsupported
 
 
 def _apply_resolved(
@@ -259,6 +402,9 @@ def _apply_resolved(
         content = adapter.render_artifact(artifact, merged.config, scope)
         native = adapter.native_path(scope, repo_root, artifact)
         rendered = _managed_copy_path(adapter, root, scope, artifact, native)
+        if artifact.seed_only and native.is_file():
+            results.append(_seeded_result(adapter, artifact, action, native, rendered))
+            continue
         digest = content_hash(content)
         current_hash = file_hash(native)
         rendered_hash = file_hash(rendered)
@@ -351,12 +497,33 @@ def _content_diff(content: str | bytes, native: Path, rendered: Path) -> str:
     )
 
 
+def _seeded_result(
+    adapter: AgentAdapter,
+    artifact: Artifact,
+    action: str,
+    native: Path,
+    rendered: Path,
+) -> OperationResult:
+    """Report a seed-only artifact that already exists as left untouched."""
+    return OperationResult(
+        adapter.name,
+        artifact.key,
+        action,
+        False,
+        native,
+        rendered,
+        message="exists; owned by the repository",
+    )
+
+
 def _artifact_mode(artifact: Artifact) -> int | None:
     return 0o755 if artifact.executable else None
 
 
 def _mode_differs(path: Path, artifact: Artifact) -> bool:
-    return artifact.executable and path.is_file() and path.stat().st_mode & 0o777 != 0o755
+    return (
+        artifact.executable and path.is_file() and path.stat().st_mode & 0o777 != 0o755
+    )
 
 
 def _highest_source(provenance: dict[str, str]) -> str:

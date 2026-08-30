@@ -1,0 +1,13 @@
+{
+  "name": "__PROJECT__",
+  "tsconfig": "./tsconfig.json",
+  "output": "__DOCS_OUT_RELATIVE__",
+  "exportFormat": "markdown",
+  "hideGenerator": true,
+  "disableCoverage": true,
+  "disableGraph": true,
+  "disableSourceCode": true,
+  "disablePrivate": true,
+  "disableInternal": true,
+  "disableLifeCycleHooks": true
+}

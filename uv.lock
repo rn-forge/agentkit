@@ -540,7 +540,7 @@ dev = [
 
 [[package]]
 name = "rn-forge-commons"
-version = "0.1.0"
+version = "0.2.2"
 source = { directory = "../pykit/packages/rn-forge-commons" }
 dependencies = [
     { name = "pyyaml" },

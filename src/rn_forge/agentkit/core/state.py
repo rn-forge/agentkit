@@ -16,6 +16,22 @@ from typing import Any, cast
 from .io import atomic_write
 
 
+_backup_run_timestamp: str | None = None
+
+
+def start_backup_run() -> None:
+    """Start a new backup run, assigning its timestamp on first snapshot."""
+    global _backup_run_timestamp
+    _backup_run_timestamp = None
+
+
+def _backup_timestamp() -> str:
+    global _backup_run_timestamp
+    if _backup_run_timestamp is None:
+        _backup_run_timestamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%S.%fZ")
+    return _backup_run_timestamp
+
+
 def content_hash(content: str | bytes) -> str:
     """Return a SHA-256 digest for text or byte content."""
     payload = content.encode() if isinstance(content, str) else content
@@ -86,7 +102,7 @@ def backup_file(path: Path, scope_root: Path) -> Path | None:
     path = Path(path)
     if not path.is_file():
         return None
-    timestamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%S.%fZ")
+    timestamp = _backup_timestamp()
     try:
         relative = path.expanduser().resolve().relative_to(Path.home().resolve())
     except ValueError:

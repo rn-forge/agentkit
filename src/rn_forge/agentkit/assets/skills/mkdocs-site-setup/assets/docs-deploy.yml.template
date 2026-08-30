@@ -1,0 +1,68 @@
+name: Deploy documentation
+
+# Builds the single MkDocs site covering architecture prose, the Python API
+# reference, and the frontend reference (see scripts/gen-docs.sh), then
+# publishes it to GitHub Pages. Nothing built here is committed to the repo.
+
+on:
+  push:
+    branches: [__DEFAULT_BRANCH__]
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v3
+        with:
+          python-version: "__PYTHON_VERSION__"
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          package_json_file: __FRONTEND_DIR__/package.json
+
+      - name: Install Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: __NODE_VERSION__
+          cache: pnpm
+          cache-dependency-path: pnpm-lock.yaml
+
+      - name: Install Python dependencies
+        run: __PY_SYNC_CMD__
+
+      - name: Install Node dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build docs site
+        run: ./scripts/gen-docs.sh "$RUNNER_TEMP/site"
+
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: ${{ runner.temp }}/site
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4

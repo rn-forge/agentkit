@@ -10,6 +10,7 @@ import typer
 
 from .agents.registry import registry
 from .commands import global_cmds, project_cmds, shared_cmds
+from .core.state import start_backup_run
 
 app = typer.Typer(
     name="agentkit",
@@ -30,6 +31,7 @@ def root_options(
     ),
 ) -> None:
     """Manage global and repository-local AI agent configuration."""
+    start_backup_run()
     if quiet and json_output:
         raise typer.BadParameter("--quiet and --json are mutually exclusive")
     ctx.obj = {"quiet": quiet, "json": json_output}

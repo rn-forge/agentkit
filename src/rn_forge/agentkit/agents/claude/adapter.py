@@ -44,8 +44,14 @@ class ClaudeAdapter(AgentAdapter):
             return [
                 config,
                 Artifact(
+                    "CLAUDE.md",
+                    Path("CLAUDE.md"),
+                    template="CLAUDE.local.md.j2",
+                    seed_only=True,
+                ),
+                Artifact(
                     key="hooks/post-edit-format.sh",
-                    native_relative=Path("hooks/claude/post-edit-format.sh"),
+                    native_relative=Path("claude/hooks/post-edit-format.sh"),
                     root="share",
                     source=self._shared_scripts_dir / "post-edit-format.sh",
                     executable=True,
@@ -64,15 +70,15 @@ class ClaudeAdapter(AgentAdapter):
                 template="concise.md.j2",
             ),
             Artifact(
-                "hooks/lib/guard-core.sh",
-                Path("hooks/lib/guard-core.sh"),
+                "hooks/guard-core.sh",
+                Path("_common/hooks/guard-core.sh"),
                 root="share",
                 source=self._shared_scripts_dir / "guard-core.sh",
             ),
             *[
                 Artifact(
                     f"hooks/{name}",
-                    Path("hooks/claude") / name,
+                    Path("claude/hooks") / name,
                     root="share",
                     source=self._assets_dir / "hooks" / name,
                     executable=True,
@@ -84,7 +90,10 @@ class ClaudeAdapter(AgentAdapter):
                     "session-compact-context.sh",
                 )
             ],
+            *self.skill_artifacts(self._skills_dir),
         ]
+
+    _skills_dir = Path(".claude/skills")
 
     @property
     def _assets_dir(self) -> Path:
@@ -128,6 +137,8 @@ class ClaudeAdapter(AgentAdapter):
         self, artifact: Artifact, merged_config: dict[str, Any], scope: Scope
     ) -> str | bytes:
         """Render shared instruction templates and delegate other artifacts."""
+        if artifact.key.startswith("skills/") and artifact.template is not None:
+            return self.render_skill_artifact(artifact)
         if artifact.key in {"CLAUDE.md", "output-styles/concise.md"}:
             assert artifact.template is not None
             return RenderEngine(self._shared_instructions_dir).render_template(
@@ -140,4 +151,5 @@ class ClaudeAdapter(AgentAdapter):
         return [
             *RenderEngine(self.template_dir).validate_templates(),
             *RenderEngine(self._shared_instructions_dir).validate_templates(),
+            *self.skill_template_errors(self._skills_dir),
         ]

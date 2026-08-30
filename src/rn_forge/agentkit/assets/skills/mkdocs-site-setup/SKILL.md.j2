@@ -1,0 +1,243 @@
+---
+name: mkdocs-site-setup
+description: Scaffold or incrementally update a single MkDocs documentation site for a Python + frontend (Angular/React/Svelte/Vue/TS) monorepo, mixing handwritten prose (architecture/guides/runbooks) with generated API reference — mkdocstrings for Python; compodoc for Angular, TypeDoc otherwise (+ optional component-doc extractor for Svelte/Vue) — plus a nav-driven docs linter and a GitHub Pages deploy workflow. Records why the setup was chosen in a docs-system design doc and links it from the repo's CLAUDE.md/AGENTS.md so future sessions inherit the reasoning. Safe to re-run on a repo that already has this setup — reconciles rather than regenerating from scratch. Use when the user asks to "add a docs site", "set up MkDocs", "generate API reference docs", "publish docs to GitHub Pages", or wants Python + frontend reference documentation unified into one site. Does not commit or push.
+---
+
+# MkDocs site setup (Python + frontend monorepo)
+
+The architecture is **one MkDocs site** as the
+umbrella for everything — handwritten prose lives under `docs/` and is checked in; API reference is
+generated at build time from docstrings/TSDoc/Angular decorators and gitignored. The site never
+mixes "docs I wrote" with "docs a tool wrote" in a way the reader has to track — they land in the
+same nav, and only the source-of-truth differs.
+
+This skill targets **Python + frontend monorepos specifically** (a `pyproject.toml`/`uv`/`pip`
+backend alongside a TypeScript-based frontend). It is not a generic "add docs" skill — if the target
+repo has no Python component, mkdocstrings doesn't apply and this skill is the wrong tool.
+
+## 0. Detect the target repo's shape — and whether this has run before
+
+Before writing anything, establish facts — don't assume any particular stack:
+
+- **Check for a prior run first.** Look for `docs/architecture/docs-system.md` (or whatever this
+  skill named it last time — check the repo's `CLAUDE.md`/`AGENTS.md` for a pointer, per step 7). If
+  it exists, **read it before doing anything else** — it records exactly what was scaffolded, which
+  generator was chosen and why, and any repo-specific deviations from the templates. Trust it over
+  re-deriving from scratch; only re-inspect the filesystem to confirm nothing drifted (a file was
+  deleted, a dependency was bumped). This turns a re-run into a **reconciliation pass**: diff what
+  the doc claims against what's actually on disk, and only touch files that are missing or genuinely
+  out of date. Don't re-read or re-write files whose content already matches what a fresh scaffold
+  would produce — that's wasted tool calls for no behavior change.
+- **Python side**: find `pyproject.toml` (workspace or single-package?), the actual package import
+  path (e.g. `apps/api/src/<pkg>`), and whether `uv` is in use (check for `uv.lock`) vs plain `pip`/
+  `poetry`. mkdocstrings needs the real `paths:` entry to resolve imports.
+- **Frontend framework** (determines step 3's branch): check `package.json` dependencies and marker
+  files —
+  - `angular.json` or `@angular/core` dependency → **Angular** (compodoc).
+  - `.svelte` files / `svelte.config.js` → **Svelte** (TypeDoc + optional extractor).
+  - `.vue` files / `vue.config.js` → **Vue** (TypeDoc + optional extractor).
+  - `.tsx` with `react`/`react-dom` and no framework marker above → **React** (TypeDoc alone, no
+    extractor needed).
+  - none of the above → plain TS library (TypeDoc alone).
+  A monorepo can mix these across packages (e.g. an Angular admin app next to a plain TS SDK) — if
+  so, run the appropriate generator per package rather than forcing one choice repo-wide.
+- **Package manager**: `pnpm-lock.yaml` / `package-lock.json` / `yarn.lock`.
+- **Existing docs**: beyond the prior-run check above, `grep` for `mkdocs.yml`, `typedoc.json`,
+  `.compodocrc*`, a `docs/` tree, or a docs CI workflow that predates this skill (i.e. wasn't created
+  by it) — that's an existing system to respect and extend, not overwrite.
+- **Existing decisions log**: `docs/specs/DECISIONS.md`, `docs/decisions/`, `docs/adr/`, or similar —
+  needed for step 7.
+- **Task runner**: `Taskfile.yml`, root `package.json` scripts, or `Makefile` — wire the new `docs`
+  command into whatever the repo already uses, don't introduce a second one.
+- **Default branch and CI provider**: `git remote show origin` or `.github/workflows/` presence —
+  the deploy template assumes GitHub Pages; ask if the repo uses something else (GitLab Pages,
+  Netlify) rather than guessing.
+
+If any of these are genuinely ambiguous (e.g. two plausible Python package roots, no lockfile to
+identify the package manager), ask rather than guessing — scaffolding the wrong `paths:` silently
+produces an empty reference page, which is a bad failure mode to discover late.
+
+## 1. Scaffold the `docs/` tree
+
+Create only what doesn't already exist — check each path before writing it:
+
+```
+docs/
+  index.md                    # landing page, 3-5 sentences on what the project is
+  architecture/
+    index.md                  # overview — fill from README or agent instructions, else stub
+    docs-system.md            # this skill's own design record — see step 7
+  guides/
+    development.md            # local dev setup — pull from the repo's own setup commands
+  reference/
+    python-api.md             # handwritten, see step 2
+    web/                      # generated, gitignore this whole dir (step 3)
+```
+
+Skip `runbooks/` and `specs/` unless the target repo has an equivalent (operational procedures,
+design docs) worth surfacing — don't invent empty sections. Prose content should be *derived from
+the repo* (README, CLAUDE.md/AGENTS.md, existing comments), not templated boilerplate — an empty
+"Architecture Overview" page that just restates the nav is worse than not having the page. On a
+reconciliation pass, leave existing prose pages alone; only add pages that are still missing.
+
+## 2. Python reference — mkdocstrings
+
+1. Add a `docs` dependency group to `pyproject.toml` (skip if already present):
+   ```toml
+   [dependency-groups]
+   docs = [
+     "mkdocs-material>=9.6",
+     "mkdocstrings[python]>=0.30",
+   ]
+   ```
+   (Adjust to the repo's existing dependency-declaration style if it isn't using `[dependency-groups]`
+   — e.g. an `extras` group for plain pip/poetry setups.)
+2. Copy `assets/mkdocs.yml.template` to `<repo>/mkdocs.yml`, filling `__PROJECT__` and
+   `__PYTHON_SRC_PATH__` (the `src` root mkdocstrings should import from — e.g. `apps/api/src`). If
+   `mkdocs.yml` already exists, edit it rather than overwriting — merge in the `mkdocstrings` plugin
+   block and reference nav entry without clobbering nav sections a prior run or a human added.
+3. Write `docs/reference/python-api.md` by hand: group `::: module.path` directives by architectural
+   layer (however this repo's own layering works — check CLAUDE.md/AGENTS.md or infer from directory
+   names) — e.g. "library layer", then "services", then "jobs". Don't dump every module
+   flat — the grouping *is* the value-add over raw docstring output. Only include modules that
+   already carry docstrings; a bare `:::` directive against an undocumented module renders as noise.
+4. Public modules/classes/route handlers need docstrings for this to be worth anything — if the repo
+   has none, say so explicitly rather than generating a reference page that's mostly blank.
+
+## 3. Frontend reference — compodoc (Angular) or TypeDoc (everything else)
+
+### Angular → compodoc
+
+Prefer compodoc for any Angular package — it understands Angular decorators (`@Component`,
+`@Injectable`, `@NgModule`, template/style bindings) that TypeDoc doesn't, and needs no extractor
+convention to document components.
+
+1. Copy `assets/compodoc.config.json.template` to `apps/<web-app>/.compodocrc.json`, filling
+   `__PROJECT__` and `__DOCS_OUT_RELATIVE__` (e.g. `../../docs/reference/web`, relative to the config
+   file's location). Add `@compodoc/compodoc` as a devDependency.
+2. `exportFormat: "markdown"` makes compodoc emit markdown instead of a standalone HTML site, so its
+   output can live inside the MkDocs nav like everything else. **Its entry file is `README.md`, not
+   `index.md`** — point the `mkdocs.yml` nav reference entry at `reference/web/README.md`, and note
+   this explicitly when filling the nav (this is the one place compodoc's output shape differs from
+   TypeDoc's — don't copy the TypeDoc nav line verbatim).
+3. No component extractor script is needed — compodoc documents components natively. Skip that part
+   of the section below entirely for an Angular package.
+
+### React / Svelte / Vue / plain TS → TypeDoc
+
+1. Copy `assets/typedoc.json.template` to `apps/<web-app>/typedoc.json`. Fill `__TS_ENTRY__` (e.g.
+   `src/lib`) and `__DOCS_OUT_RELATIVE__` (e.g. `../../docs/reference/web/ts`, relative to the
+   typedoc.json location). Add `typedoc` and `typedoc-plugin-markdown` as devDependencies.
+2. **React (`.tsx`)**: TypeDoc parses `.tsx` directly via TSDoc comments on the component — no extra
+   extractor needed. Just don't exclude `**/*.tsx` in the template's `exclude` list.
+3. **Svelte or Vue**: TypeDoc cannot parse `.svelte`/`.vue`. Two options, in order of preference:
+   - **If the repo already has (or will adopt) a convention of a leading contract comment on every
+     component file** (props/callbacks/state/a11y): copy
+     `assets/gen-web-docs.mjs.template` to `scripts/gen-web-docs.mjs`, filling `__FRONTEND_SRC__`,
+     `__COMPONENT_EXT__` (`svelte` or `vue`), and `__COMPONENT_FRAMEWORK__`. Note the `$props()`
+     regex in the template is Svelte-5-runes-specific — for Vue, adapt `propsBlock()` to whatever the
+     repo's prop-declaration convention is (`defineProps<...>()`), or drop that piece.
+   - **Otherwise**: don't build an extractor against a convention that doesn't exist yet — leave
+     `docs/reference/web/components.md` handwritten, or point the user at a mature tool for their
+     framework (e.g. `vue-docgen-api`) and let them decide if it's worth the dependency.
+
+Add `docs/reference/web/` to `.gitignore` in all cases — same treatment as any other build output.
+
+## 4. Orchestration script
+
+Copy `assets/gen-docs.sh.template` to `scripts/gen-docs.sh`, `chmod +x` it, and fill:
+- `__FRONTEND_SYNC_STEP__` — a pre-step only needed for SvelteKit (`pnpm -C <web> exec svelte-kit
+  sync`, so TypeDoc can resolve `$lib`/`$app`); omit for other frameworks.
+- `__FRONTEND_DOC_STEP__` — `pnpm -C <web> exec typedoc`, or for Angular
+  `pnpm -C <web> exec compodoc -p tsconfig.json -c .compodocrc.json`.
+- `__COMPONENT_DOC_STEP__` — `node scripts/gen-web-docs.mjs` if step 3 built the Svelte/Vue
+  extractor; otherwise leave this line blank/removed (compodoc and TypeDoc-on-React/plain-TS need no
+  second pass).
+- `__SITE_OUT_DEFAULT__` — where `mkdocs build` writes locally (must NOT be nested under `docs/`;
+  MkDocs refuses that). `.docs-site/` or similar, gitignored.
+
+## 5. Docs linter
+
+Copy `assets/check-docs.py` to `scripts/check-docs.py` as-is — it's already generic: it reads
+`mkdocs.yml`'s `nav` as the single source of page structure, auto-detects generated/gitignored
+subtrees under `docs/` from `.gitignore`, and checks broken relative links, broken heading anchors,
+and orphan pages unreachable from nav. Requires `pyyaml` — add it to the `docs` dependency group if
+not already a transitive dependency. Wire it into whatever `lint`/`validate` task the repo already
+runs.
+
+## 6. CI deploy workflow
+
+If the repo is on GitHub and doesn't already have a Pages deploy: copy
+`assets/docs-deploy.yml.template` to `.github/workflows/docs.yml`, filling `__DEFAULT_BRANCH__`,
+`__PYTHON_VERSION__`, `__FRONTEND_DIR__`, `__NODE_VERSION__`, `__PY_SYNC_CMD__` (e.g.
+`uv sync --group dev --group docs`). Point out to the user that GitHub Pages needs to be enabled in
+repo settings (Source: GitHub Actions) — that's a one-time manual step this workflow can't do for
+them.
+
+Adjust or skip this step entirely if the repo uses a different CI provider or doesn't want a public
+Pages deploy — ask rather than assuming GitHub Pages is wanted.
+
+## 7. Record the design so it survives as the repo's own knowledge
+
+The setup this skill produces (single-site umbrella, generated-vs-handwritten split, which doc
+generator per language) is a judgment call, not an obvious default — it needs to be discoverable by
+someone (or some future agent session) reading only the target repo, with no access to this skill.
+
+1. **If the repo already has a decisions log** (`docs/specs/DECISIONS.md`, `docs/adr/`,
+   `docs/decisions/`, found in step 0): append an entry there, in that log's existing style, covering:
+   why a single MkDocs site was chosen as the umbrella, which generator was picked for the frontend
+   and why (compodoc vs TypeDoc, extractor built or skipped), and what's handwritten vs generated.
+2. **Otherwise, create `docs/architecture/docs-system.md`** (scaffolded as a stub in step 1) as both
+   a design-rationale doc *and* an append-only changelog scoped to the docs system itself — the
+   narrow-scope equivalent of a repo-wide `DECISIONS.md`. Structure:
+   ```markdown
+   # Documentation system
+
+   How this repo's documentation is built, and why. See `scripts/gen-docs.sh` for the build steps.
+
+   ## Design
+
+   - One MkDocs site is the umbrella for handwritten prose and generated reference — no separate
+     "API docs" site to keep in sync.
+   - Handwritten: docs/architecture/, docs/guides/, docs/reference/python-api.md (the mkdocstrings
+     entry point). Generated and gitignored: docs/reference/web/.
+   - Python reference: mkdocstrings, grouped by architectural layer in python-api.md.
+   - Frontend reference: <compodoc|TypeDoc>, because <the actual reason — e.g. "the frontend is
+     Angular and compodoc understands its decorators natively">.
+
+   ## Changelog
+
+   - YYYY-MM-DD: initial setup (scaffolded by the mkdocs-site-setup skill).
+   ```
+   On every future run of this skill against this repo, append a dated entry here instead of
+   rewriting the file — this is what step 0's "check for a prior run" reads back.
+3. **Point the repo's `CLAUDE.md`/`AGENTS.md` at it** so future sessions inherit the reasoning
+   automatically without re-discovering it: add (or extend an existing "Documentation" section with)
+   a line such as:
+   ```markdown
+   - `docs/architecture/docs-system.md` — how and why the docs site is built; update it when the
+     docs tooling changes.
+   ```
+   If the target repo has no `CLAUDE.md`/`AGENTS.md` at all, don't create one just for this — mention
+   the gap to the user instead, since introducing that file is a bigger decision than this skill's
+   scope.
+
+## 8. Validate
+
+- `uv run --group docs mkdocs build --strict` (or equivalent) — `strict: true` in mkdocs.yml turns
+  warnings (broken internal links, missing nav targets) into build failures, which is deliberate.
+- Run `scripts/check-docs.py`.
+- Run `./scripts/gen-docs.sh` end to end once to confirm the frontend generation steps actually
+  produce output before wiring it into CI. On a reconciliation pass where nothing in steps 1-6
+  actually changed, this is still worth doing once to catch drift (a dependency upgrade silently
+  changing TypeDoc's output shape, for instance) — but skip re-running `pnpm install`/`uv sync` if
+  the lockfiles didn't change.
+
+## 9. Report
+
+Summarize what was created/modified/left alone (be explicit about the reconciliation-pass
+distinction if this was a re-run), what step 3 chose for the frontend and why, where the design
+rationale was recorded (existing decisions log vs new `docs-system.md`) and that `CLAUDE.md`/
+`AGENTS.md` now points at it, any manual step the user still owes (enabling Pages, filling in stub
+prose pages), and the validation results. Do not commit or push — leave everything in the working
+tree.

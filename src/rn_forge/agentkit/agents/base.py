@@ -16,7 +16,7 @@ from ..core.artifacts import Artifact
 from ..core.config import ConfigMerger, MergeResult, defaults_for
 from ..core.io import read_config
 from ..core.paths import global_root, project_scope_root
-from ..core.render import RenderEngine
+from ..core.render import RenderEngine, RenderError
 
 if TYPE_CHECKING:
     import typer
@@ -112,7 +112,9 @@ class AgentAdapter(ABC):
         Raises:
             ValueError: The adapter does not declare exactly one ``config``.
         """
-        primary = [artifact for artifact in self.artifacts(scope) if artifact.key == "config"]
+        primary = [
+            artifact for artifact in self.artifacts(scope) if artifact.key == "config"
+        ]
         if len(primary) != 1:
             raise ValueError(
                 f"{self.name} must declare exactly one config artifact for {scope}"
@@ -143,12 +145,73 @@ class AgentAdapter(ABC):
     ) -> Path:
         """Resolve an agent-rooted artifact's managed staging path."""
         managed = artifact or self.primary_artifact(scope)
-        return (
-            Path(scope_root)
-            / self.name
-            / "rendered"
-            / managed.native_relative
+        return Path(scope_root) / self.name / "rendered" / managed.native_relative
+
+    @property
+    def shared_skills_dir(self) -> Path:
+        """Return the packaged agent-neutral skill source tree."""
+        return Path(__file__).parents[1] / "assets" / "skills"
+
+    def skill_artifacts(self, native_skills_dir: Path) -> list[Artifact]:
+        """Declare every packaged skill file beneath an agent's skills root.
+
+        ``SKILL.md.j2`` files render per agent so the handful of harness-specific
+        lines can branch on ``agent``; every other file is a bundled resource
+        copied verbatim, because template placeholders inside them (go-task's
+        ``{{.VAR}}``, GitHub Actions' ``${{ }}``) are not Jinja and must survive
+        untouched.
+
+        Args:
+            native_skills_dir: Skills root relative to the agent's native root.
+        """
+        root = self.shared_skills_dir
+        artifacts: list[Artifact] = []
+        for path in sorted(root.rglob("*")):
+            if not path.is_file():
+                continue
+            relative = path.relative_to(root)
+            if path.suffix == ".j2":
+                rendered = relative.with_suffix("")
+                artifacts.append(
+                    Artifact(
+                        key=f"skills/{rendered.as_posix()}",
+                        native_relative=native_skills_dir / rendered,
+                        template=relative.as_posix(),
+                    )
+                )
+            else:
+                artifacts.append(
+                    Artifact(
+                        key=f"skills/{relative.as_posix()}",
+                        native_relative=native_skills_dir / relative,
+                        source=path,
+                    )
+                )
+        return artifacts
+
+    def render_skill_artifact(self, artifact: Artifact) -> str:
+        """Render one skill template for this agent."""
+        assert artifact.template is not None
+        return RenderEngine(self.shared_skills_dir).render_template(
+            artifact.template, {"agent": self.name}
         )
+
+    def skill_template_errors(self, native_skills_dir: Path) -> list[str]:
+        """Return render errors for every packaged skill template.
+
+        Rendering rather than merely compiling is deliberate: it also catches an
+        undefined variable under ``StrictUndefined``.
+        """
+        engine = RenderEngine(self.shared_skills_dir)
+        errors: list[str] = []
+        for artifact in self.skill_artifacts(native_skills_dir):
+            if artifact.template is None:
+                continue
+            try:
+                engine.render_template(artifact.template, {"agent": self.name})
+            except RenderError as exc:
+                errors.append(f"{artifact.template}: {exc}")
+        return errors
 
     def render_artifact(
         self, artifact: Artifact, merged_config: dict[str, Any], scope: Scope

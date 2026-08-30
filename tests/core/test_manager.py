@@ -1,11 +1,14 @@
 import json
+from rn_forge.agentkit.agents.claude import ClaudeAdapter
 from rn_forge.agentkit.agents.codex import CodexAdapter
-from rn_forge.agentkit.core.io import write_config
+from rn_forge.agentkit.core.io import read_config, write_config
 from rn_forge.agentkit.core.manager import (
     apply_adapter,
+    capture_adapter,
     init_adapter,
     managed_config_path,
     reset_adapter,
+    resolve_config,
     sync_adapter,
 )
 from rn_forge.agentkit.core.paths import global_root, project_scope_root
@@ -80,3 +83,77 @@ def test_sync_backs_up_drift_and_reset_restores_defaults(isolated_env) -> None:
     managed = managed_config_path(adapter, global_root()).read_text()
     assert "model =" not in managed
     assert 'personality = "pragmatic"' in managed
+
+
+def test_capture_updates_managed_source_and_preserves_comments(isolated_env) -> None:
+    _, _, repo = isolated_env
+    adapter = CodexAdapter()
+    source = global_root() / "codex" / "config.toml"
+    source.parent.mkdir(parents=True)
+    source.write_text('# keep\npersonality = "pragmatic"\n')
+    applied = apply_adapter(adapter, "global", repo)[0]
+    applied.native_path.write_text(
+        applied.native_path.read_text().replace(
+            'personality = "pragmatic"',
+            'personality = "friendly"\nmodel = "gpt-5"',
+        )
+    )
+
+    result = capture_adapter(adapter, "global", repo)
+
+    assert result.changed is True
+    assert '# keep' in source.read_text()
+    assert read_config(source)["personality"] == "friendly"
+    assert read_config(source)["model"] == "gpt-5"
+
+
+def test_capture_records_only_new_append_list_values(isolated_env) -> None:
+    _, _, repo = isolated_env
+    adapter = ClaudeAdapter()
+    source = global_root() / "claude" / "config.toml"
+    write_config(source, {"permissions": {"allow": ["Bash(existing:*)"]}})
+    applied = apply_adapter(adapter, "global", repo)[0]
+    native = json.loads(applied.native_path.read_text())
+    native["permissions"]["allow"].append("Bash(captured:*)")
+    applied.native_path.write_text(json.dumps(native))
+
+    capture_adapter(adapter, "global", repo)
+
+    assert read_config(source)["permissions"]["allow"] == [
+        "Bash(existing:*)",
+        "Bash(captured:*)",
+    ]
+    merged, _ = resolve_config(adapter, "global", repo)
+    assert merged.config["permissions"]["allow"] == native["permissions"]["allow"]
+
+
+def test_seed_only_artifact_is_written_once_then_left_alone(isolated_env) -> None:
+    _, _, repo = isolated_env
+    adapter = CodexAdapter()
+
+    first = _result_for(apply_adapter(adapter, "local", repo), "AGENTS.md")
+    assert first.changed is True
+    seeded = repo / "AGENTS.md"
+    assert "Read `CLAUDE.md` now" in seeded.read_text()
+
+    seeded.write_text("# AGENTS.md\n\nHand-written guidance.\n")
+    second = _result_for(apply_adapter(adapter, "local", repo), "AGENTS.md")
+    assert second.changed is False
+    assert second.backup_path is None
+    assert seeded.read_text() == "# AGENTS.md\n\nHand-written guidance.\n"
+
+    synced = _result_for(sync_adapter(adapter, "local", repo), "AGENTS.md")
+    assert synced.changed is False
+    assert seeded.read_text() == "# AGENTS.md\n\nHand-written guidance.\n"
+
+
+def test_seed_only_claude_md_is_scaffolded_for_the_repo(isolated_env) -> None:
+    _, _, repo = isolated_env
+    adapter = ClaudeAdapter()
+    result = _result_for(apply_adapter(adapter, "local", repo), "CLAUDE.md")
+    assert result.changed is True
+    assert "single source of agent-facing guidance" in (repo / "CLAUDE.md").read_text()
+
+
+def _result_for(results, key: str):
+    return next(result for result in results if result.artifact == key)

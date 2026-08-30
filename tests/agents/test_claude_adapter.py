@@ -21,20 +21,34 @@ def test_claude_render_and_parse(tmp_path) -> None:
 
 def test_claude_artifacts_and_scope_defaults() -> None:
     adapter = ClaudeAdapter()
-    assert [artifact.key for artifact in adapter.artifacts("global")] == [
+    global_keys = [artifact.key for artifact in adapter.artifacts("global")]
+    assert global_keys[:8] == [
         "config",
         "CLAUDE.md",
         "output-styles/concise.md",
-        "hooks/lib/guard-core.sh",
+        "hooks/guard-core.sh",
         "hooks/pre-bash-guard.sh",
         "hooks/user-prompt-secret-guard.sh",
         "hooks/pre-write-protect.sh",
         "hooks/session-compact-context.sh",
     ]
+    skill_keys = global_keys[8:]
+    assert skill_keys and all(key.startswith("skills/") for key in skill_keys)
+    assert "skills/go-task-setup/SKILL.md" in skill_keys
+    assert "skills/mkdocs-site-setup/SKILL.md" in skill_keys
+    assert "skills/sonar-cleanup/SKILL.md" in skill_keys
     assert [artifact.key for artifact in adapter.artifacts("local")] == [
         "config",
+        "CLAUDE.md",
         "hooks/post-edit-format.sh",
     ]
+    seed = next(
+        artifact
+        for artifact in adapter.artifacts("local")
+        if artifact.key == "CLAUDE.md"
+    )
+    assert seed.seed_only
+    assert seed.native_relative == Path("CLAUDE.md")
     assert adapter.defaults("global")["outputStyle"] == "concise"
     assert "deny" in adapter.defaults("global")["permissions"]
     assert adapter.defaults("local")["permissions"]["deny"] == []

@@ -1,0 +1,57 @@
+version: "3"
+
+# The shared "internal implementation" namespace. Holds the actual lint/
+# test/typecheck/format primitives that the cross-cutting root wrappers
+# (task lint, task test, ...) compose. Everything here is `internal: true`
+# — it exists to be called from a wrapper or another namespace task, not
+# run directly by a developer. Add one block per primitive as the repo
+# grows; don't pre-create checks the repo doesn't have yet.
+
+tasks:
+  lint:backend:
+    desc: __PY_LINT_DESC__
+    internal: true
+    cmds:
+      - __PY_LINT_CMD__
+
+  lint:frontend:
+    desc: __FRONTEND_LINT_DESC__
+    internal: true
+    cmds:
+      - __FRONTEND_LINT_CMD__
+
+  format:backend:
+    desc: __PY_FORMAT_DESC__
+    internal: true
+    cmds:
+      - __PY_FORMAT_CMD__
+
+  format:frontend:
+    desc: __FRONTEND_FORMAT_DESC__
+    internal: true
+    cmds:
+      - __FRONTEND_FORMAT_CMD__
+
+  typecheck:backend:
+    desc: __PY_TYPECHECK_DESC__
+    internal: true
+    cmds:
+      - __PY_TYPECHECK_CMD__
+
+  typecheck:frontend:
+    desc: __FRONTEND_TYPECHECK_DESC__
+    internal: true
+    cmds:
+      - __FRONTEND_TYPECHECK_CMD__
+
+  test:backend:
+    desc: __PY_TEST_DESC__
+    internal: true
+    cmds:
+      - __PY_TEST_CMD__
+
+  test:frontend:
+    desc: __FRONTEND_TEST_DESC__
+    internal: true
+    cmds:
+      - __FRONTEND_TEST_CMD__

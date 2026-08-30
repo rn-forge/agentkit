@@ -16,7 +16,7 @@ from .. import __version__
 from ..core.config import parse_cli_overrides
 from ..core.diff import layered_changes, unified_diff
 from ..core.doctor import CheckResult, check_agent
-from ..core.manager import project_root, resolve_config, scope_root
+from ..core.manager import capture_adapter, project_root, resolve_config, scope_root
 from .common import command_options, console, emit, fail, options, selected
 
 app = typer.Typer()
@@ -34,6 +34,9 @@ def diff_command(
     ),
     repo: Path = typer.Option(Path.cwd(), "--repo", help="Repository directory."),
     check: bool = typer.Option(False, "--check", help="Exit 2 when drift exists."),
+    write: bool = typer.Option(
+        False, "--write", help="Capture native config drift into managed source."
+    ),
     quiet: bool = typer.Option(False, "--quiet", "-q", help="Suppress output."),
     json_output: bool = typer.Option(False, "--json", help="Emit JSON."),
 ) -> None:
@@ -45,11 +48,15 @@ def diff_command(
         records: list[dict[str, Any]] = []
         drift = False
         for adapter in selected(agent):
+            captured = capture_adapter(adapter, scope, root) if write else None
             merged, layers = resolve_config(adapter, scope, root, overrides)
             artifact_diffs: list[dict[str, Any]] = []
             for artifact in adapter.artifacts(scope):
-                expected = adapter.render_artifact(artifact, merged.config, scope)
                 native = adapter.native_path(scope, root, artifact)
+                if artifact.seed_only and native.is_file():
+                    # Seeded once, then owned by the repo: divergence is expected.
+                    continue
+                expected = adapter.render_artifact(artifact, merged.config, scope)
                 if isinstance(expected, bytes):
                     try:
                         expected_text = expected.decode("utf-8")
@@ -115,6 +122,18 @@ def diff_command(
                         for item in artifact_diffs
                         if item["diff"]
                     ),
+                    "capture": (
+                        {
+                            "changed": captured.changed,
+                            "source": str(
+                                scope_root(scope, root)
+                                / adapter.name
+                                / "config.toml"
+                            ),
+                        }
+                        if captured is not None
+                        else None
+                    ),
                 }
             )
     except (OSError, ValueError) as exc:
@@ -127,6 +146,9 @@ def diff_command(
     else:
         for item in records:
             console.print(f"[bold]{item['agent']}[/bold] ({scope})")
+            if item["capture"] is not None:
+                status = "changed" if item["capture"]["changed"] else "unchanged"
+                console.print(f"Captured config {status} → {item['capture']['source']}")
             table = Table("Key", "Layer", "Before", "After")
             for change in item["layers"]:
                 table.add_row(

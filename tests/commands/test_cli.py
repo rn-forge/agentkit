@@ -23,6 +23,18 @@ def test_project_init_update_status(isolated_env) -> None:
         app, ["project", "init", "--agent", "codex", "--repo", str(repo)]
     )
     assert initialized.exit_code == 0, initialized.output
+    assert (repo / ".codex" / "config.toml").exists()
+    assert (repo / ".codex" / "hooks.json").exists()
+
+    status = runner.invoke(
+        app,
+        ["--json", "project", "status", "--agent", "codex", "--repo", str(repo)],
+    )
+    assert status.exit_code == 0
+    status_data = json.loads(status.stdout)[0]
+    assert status_data["rendered"] is True
+    assert status_data["drift"] is False
+
     updated = runner.invoke(
         app,
         [
@@ -44,6 +56,74 @@ def test_project_init_update_status(isolated_env) -> None:
     assert json.loads(status.stdout)[1]["agent"] == "codex"
 
 
+def test_project_init_scaffolds_gitignore_once(isolated_env) -> None:
+    _, _, repo = isolated_env
+    gitignore = repo / ".gitignore"
+    gitignore.write_text("*.log\n", encoding="utf-8")
+
+    first = runner.invoke(
+        app, ["project", "init", "--agent", "codex", "--repo", str(repo)]
+    )
+    second = runner.invoke(
+        app, ["project", "init", "--agent", "codex", "--repo", str(repo)]
+    )
+
+    assert first.exit_code == 0, first.output
+    assert second.exit_code == 0, second.output
+    content = gitignore.read_text(encoding="utf-8")
+    assert content.startswith("*.log\n")
+    assert content.count("# BEGIN rn-forge agentkit") == 1
+    assert content.count("/.rn-forge/agentkit/backups/") == 1
+
+
+def test_project_init_refreshes_stale_gitignore_block(isolated_env) -> None:
+    _, _, repo = isolated_env
+    gitignore = repo / ".gitignore"
+    gitignore.write_text(
+        "node_modules/\n\n"
+        "# BEGIN rn-forge agentkit\n"
+        "/.rn-forge/agentkit/hooks/\n"
+        "# END rn-forge agentkit\n\n"
+        "*.log\n",
+        encoding="utf-8",
+    )
+
+    result = runner.invoke(
+        app, ["project", "init", "--agent", "codex", "--repo", str(repo)]
+    )
+
+    assert result.exit_code == 0, result.output
+    content = gitignore.read_text(encoding="utf-8")
+    assert "/.rn-forge/agentkit/hooks/\n" not in content
+    assert "/.rn-forge/agentkit/*/hooks/" in content
+    assert "/.rn-forge/agentkit/_common/" in content
+    assert content.count("# BEGIN rn-forge agentkit") == 1
+    assert content.startswith("node_modules/\n")
+    assert content.endswith("*.log\n")
+
+
+def test_project_init_dry_run_writes_nothing(isolated_env) -> None:
+    _, _, repo = isolated_env
+
+    result = runner.invoke(
+        app,
+        [
+            "project",
+            "init",
+            "--agent",
+            "codex",
+            "--repo",
+            str(repo),
+            "--dry-run",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert not (repo / ".rn-forge").exists()
+    assert not (repo / ".codex").exists()
+    assert not (repo / ".gitignore").exists()
+
+
 def test_diff_check_uses_exit_code_two(isolated_env) -> None:
     _, _, repo = isolated_env
     result = runner.invoke(
@@ -62,6 +142,40 @@ def test_diff_check_uses_exit_code_two(isolated_env) -> None:
     assert result.exit_code == 2
 
 
+def test_diff_write_captures_native_config(isolated_env) -> None:
+    _, _, repo = isolated_env
+    initialized = runner.invoke(
+        app, ["project", "init", "--agent", "codex", "--repo", str(repo)]
+    )
+    assert initialized.exit_code == 0, initialized.output
+    native = repo / ".codex" / "config.toml"
+    document = tomlkit.loads(native.read_text())
+    document["model"] = "gpt-5"
+    native.write_text(tomlkit.dumps(document))
+
+    result = runner.invoke(
+        app,
+        [
+            "diff",
+            "--write",
+            "--scope",
+            "local",
+            "--agent",
+            "codex",
+            "--repo",
+            str(repo),
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    record = json.loads(result.stdout)[0]
+    assert record["capture"]["changed"] is True
+    assert record["artifacts"][0]["drift"] is False
+    managed = repo / ".rn-forge" / "agentkit" / "codex" / "config.toml"
+    assert tomlkit.loads(managed.read_text())["model"] == "gpt-5"
+
+
 def test_install_commands_warn_when_jq_is_missing(isolated_env, monkeypatch) -> None:
     _, _, repo = isolated_env
     monkeypatch.setattr(
@@ -77,6 +191,31 @@ def test_install_commands_warn_when_jq_is_missing(isolated_env, monkeypatch) -> 
     assert initialized.exit_code == 0, initialized.output
     assert "WARNING: jq is not installed" in applied.output
     assert "WARNING: jq is not installed" in initialized.output
+
+
+def test_global_apply_uses_one_backup_directory_per_invocation(isolated_env) -> None:
+    home, rnf, _ = isolated_env
+
+    initial = runner.invoke(app, ["global", "apply", "--agent", "codex"])
+    assert initial.exit_code == 0, initial.output
+    (home / ".codex/config.toml").write_text('model = "manual"\n')
+    (home / ".codex/AGENTS.md").write_text("manual instructions\n")
+
+    applied = runner.invoke(app, ["global", "apply", "--agent", "codex"])
+    assert applied.exit_code == 0, applied.output
+
+    backup_root = rnf / "share" / "agentkit" / "backups"
+    backup_runs = list(backup_root.iterdir())
+    assert len(backup_runs) == 1
+    assert (backup_runs[0] / ".codex/config.toml").read_text() == 'model = "manual"\n'
+    assert (backup_runs[0] / ".codex/AGENTS.md").read_text() == (
+        "manual instructions\n"
+    )
+
+    (home / ".codex/config.toml").write_text('model = "manual again"\n')
+    reapplied = runner.invoke(app, ["global", "apply", "--agent", "codex"])
+    assert reapplied.exit_code == 0, reapplied.output
+    assert len(list(backup_root.iterdir())) == 2
 
 
 def test_fresh_default_pack_installs_and_hook_commands_resolve(

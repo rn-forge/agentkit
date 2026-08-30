@@ -1,0 +1,13 @@
+version: "3"
+
+tasks:
+  init:
+    desc: Create any local runtime mounts/dirs the app needs (git-ignored).
+    internal: true
+    cmds:
+      - mkdir -p __RUNTIME_DIR__
+
+  clean:
+    desc: Remove build outputs and caches. __CLEAN_EXCLUSIONS_NOTE__
+    cmds:
+      - __CLEAN_CMD__

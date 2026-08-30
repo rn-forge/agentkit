@@ -5,7 +5,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "$HOME/.rn-forge/share/agentkit/hooks/codex/user-prompt-secret-guard.sh",
+            "command": "$HOME/.rn-forge/share/agentkit/codex/hooks/user-prompt-secret-guard.sh",
             "statusMessage": "Checking prompt"
           }
         ]
@@ -17,7 +17,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "$HOME/.rn-forge/share/agentkit/hooks/codex/pre-bash-guard.sh",
+            "command": "$HOME/.rn-forge/share/agentkit/codex/hooks/pre-bash-guard.sh",
             "statusMessage": "Checking command"
           }
         ]
@@ -27,7 +27,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "$HOME/.rn-forge/share/agentkit/hooks/codex/pre-write-protect.sh",
+            "command": "$HOME/.rn-forge/share/agentkit/codex/hooks/pre-write-protect.sh",
             "statusMessage": "Checking protected path"
           }
         ]

@@ -24,6 +24,9 @@ build-backend = "uv_build"
 
 [tool.pyright]
 typeCheckingMode = "strict"
+# Skill assets are templates copied verbatim into *other* repos, not code this
+# package imports; they must not be held to this project's type strictness.
+exclude = ["**/assets/skills/**", ".venv"]
 ignore = ["tests"]
 reportMissingTypeStubs = false
 venvPath = "."
@@ -31,6 +34,9 @@ venv = ".venv"
 
 [tool.pytest.ini_options]
 addopts = "-ra"
+
+[tool.ruff]
+extend-exclude = ["**/assets/skills/**"]
 
 [tool.ruff.lint.per-file-ignores]
 "**/tests/*" = ["ALL"]

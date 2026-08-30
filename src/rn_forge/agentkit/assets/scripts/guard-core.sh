@@ -175,14 +175,18 @@ _guard_match_path() {
 
 guard_check_prompt_secrets() {
   local prompt="$1"
+  local gitleaks_output
 
   [ -z "$prompt" ] && return 0
   if command -v gitleaks >/dev/null 2>&1; then
-    if printf '%s' "$prompt" | gitleaks stdin >/dev/null 2>&1; then
-      return 0
+    if ! gitleaks_output=$(printf '%s' "$prompt" | gitleaks stdin 2>&1); then
+      if printf '%s' "$gitleaks_output" | grep -qE 'leaks found: [1-9][0-9]*'; then
+        _guard_block "Prompt contains a secret detected by gitleaks. Remove secrets before sending."
+      else
+        _guard_block "Prompt secret scan failed because gitleaks could not run. Fix gitleaks before sending."
+      fi
+      return 1
     fi
-    _guard_block "Prompt contains a secret detected by gitleaks. Remove secrets before sending."
-    return 1
   fi
   _guard_match_secret "$prompt" '\bsk-[A-Za-z0-9_-]{16,}\b' "Prompt contains an OpenAI-style API key. Remove secrets before sending." || return 1
   _guard_match_secret "$prompt" '\bgh[pousr]_[A-Za-z0-9]{20,}\b' "Prompt contains a GitHub token. Remove secrets before sending." || return 1

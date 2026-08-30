@@ -18,6 +18,9 @@ class Artifact:
         template: Optional Jinja template name.
         source: Optional packaged static source file.
         executable: Whether writes enforce mode ``0o755``.
+        seed_only: Write only when the native path is absent, then leave the
+            file to the repository. For hand-authored files agentkit scaffolds
+            but does not own.
 
     Raises:
         ValueError: Both or neither content sources are set, or the native path
@@ -30,6 +33,7 @@ class Artifact:
     template: str | None = None
     source: Path | None = None
     executable: bool = False
+    seed_only: bool = False
 
     def __post_init__(self) -> None:
         if (self.template is None) == (self.source is None):

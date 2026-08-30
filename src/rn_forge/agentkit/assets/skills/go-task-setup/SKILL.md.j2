@@ -1,0 +1,230 @@
+---
+name: go-task-setup
+description: Establish a go-task command vocabulary for a polyglot monorepo (Python, Java, Node, Go or Rust backend + any frontend), split into cross-namespace "wrapper" tasks in the root Taskfile.yml and per-workspace "inner" tasks in tasks/*.yml, with linters that forbid raw shell in the root file and forbid CI invoking the underlying tools (uv, gradle, pnpm, pytest, ruff, ...) directly. Also runs at spec-writing time to emit a task-vocabulary story with executable acceptance criteria, so a model handed the specs builds the convention rather than inventing ad-hoc scripts. Records the decision in a design doc and links it from CLAUDE.md/AGENTS.md so future sessions inherit it. Safe to re-run — reconciles rather than regenerating. Use when the user asks to "add a Taskfile", "set up go-task", "one command vocabulary", "wrapper/inner tasks", or wants a single memorable command surface over a polyglot monorepo. Does not commit or push.
+{% if agent == "claude" %}allowed-tools: Read, Write, Edit, Bash, Glob, Grep
+{% endif %}---
+
+# go-task setup
+
+Establishes a task-vocabulary architecture in which **go-task is the only
+entrypoint** a developer or CI job invokes. Nobody calls `uv`, `gradle`, `pnpm`, `pytest`, `ruff` or
+`tsc` directly. The root `Taskfile.yml` holds cross-namespace **wrapper** tasks (`setup`, `validate`,
+`lint`, `test`, `dev`, ...); `tasks/*.yml` namespace files hold the **inner** tasks that actually
+shell out to a real tool.
+
+The split is the point. It makes the vocabulary smaller and more memorable than the tools underneath
+it, and it lets CI be pinned to a fixed, auditable set of verbs. In a polyglot repo it is also the
+only place where "run all the tests" can mean Gradle *and* Vitest without a human remembering both.
+
+**A convention only survives if something enforces it.** Scaffolding files is the easy half; the half
+that matters is what this skill leaves behind — two linters, a design doc, and an agent-instructions
+rule — so
+that the convention still holds when someone adds a task eighteen months from now without ever
+loading this skill.
+
+## 0. Mode
+
+If the invocation named a mode (`spec`, `scaffold` or `reconcile`), use it. **Otherwise detect** —
+detection is the default because this skill is often invoked by the model rather than typed by the
+user, and the tree is a stronger signal than the phrasing of a request:
+
+| Detected | Mode |
+|---|---|
+| `Taskfile.yml` exists at repo root | **reconcile** (§6) |
+| No `Taskfile.yml`, but a spec/design tree exists (`specs/`, `docs/specs/`, `docs/adr/`) and the repo has little or no source yet | **spec** (§1) |
+| Otherwise | **scaffold** (§2–§5) |
+
+If the invocation said `--dry-run` (or otherwise asked for a preview), report what each step *would*
+write and touch no files.
+
+If detection lands on **spec** but the user clearly wants files now (or vice versa), say which mode
+you picked and why in one line before proceeding, so a wrong guess is cheap to correct.
+
+## 1. Spec mode — put the convention where the handoff happens
+
+Use this when the product is still being specified. At this point there is no Taskfile, no linter and
+no CLAUDE.md/AGENTS.md, so the *only* artifact that can carry the convention is the spec itself.
+
+The mechanism is not to describe the convention and hope. It is to write **acceptance criteria a model
+can fail**.
+
+1. **Find the spec tree and match its shape.** Read two or three existing stories first — the story-id
+   scheme, the front-matter table, whether stories carry `Implements:` anchors, estimates, `Depends on`.
+   Emitting a story in a foreign format is worse than emitting none.
+2. **Write the decision upstream first**, if the tree has an architecture or ADR layer: a short
+   `#build-orchestration` section covering what the vocabulary is, why one entrypoint, why
+   wrapper/inner. The story then points at it via `Implements:`. This separation is what stops a later
+   contributor deleting the indirection as pointless ceremony — the *why* has a home that isn't a
+   commit message.
+3. **Emit the story** from `assets/spec-story.md.template`, adapted to the tree's conventions. Fill the
+   stack-specific tool names from §2's detection (run that detection even in spec mode — if the repo
+   is empty, take the stack from the architecture docs or ask).
+4. **Sequence it early.** The story must depend only on "the repo exists" and must land in the first
+   phase. This is the part most often got wrong: story 1 builds the guardrails that constrain stories
+   2..N, so the spec only has to carry the convention *once*. Land it late and you are retrofitting
+   over whatever ad-hoc npm scripts the model already wrote because it needed something to run tests
+   with. If the spec tree already has later phases written, say explicitly where this story must be
+   inserted.
+5. **Advertise this skill inside the story's task list** — a line like *"if a `go-task-setup` skill is
+   available, invoke it; otherwise satisfy the acceptance criteria directly."* The spec is guaranteed
+   to be read by whoever implements it; a skill is only loaded if its description happens to match. Put
+   the pointer in the artifact that can't be missed.
+
+Stop after writing the story. Do not scaffold — in spec mode the deliverable is the spec.
+
+## 2. Detect the target repo's shape
+
+Establish facts before writing anything. Do not assume the reference stack.
+
+- **Backend workspace and toolchain.** Identify the language and package manager, then read the *real*
+  commands out of its config rather than assuming defaults. See `references/stack-matrix.md` for the
+  per-stack mapping of install/lint/format/typecheck/test commands across Python (uv/Poetry/pip), Java
+  (Gradle/Maven), Node, Go and Rust.
+- **Frontend workspace.** Package manager from the lockfile (`pnpm-lock.yaml`, `package-lock.json`,
+  `yarn.lock`, `bun.lockb`); whether it is a workspace (`pnpm-workspace.yaml`, `workspaces` in root
+  `package.json`) or a single app; whether Nx/Turborepo sits on top. This decides the install command
+  and whether frontend tasks need `--filter <app>` / `-C <dir>` scoping.
+- **Actual tools in use.** Read dev-dependencies, don't guess: `ruff`/`mypy`/`pytest`, or
+  `spotless`/`checkstyle`/`junit`, plus `eslint`/`prettier`/`tsc`/`vitest`/`jest`/`playwright`. **Never
+  invent a tool the repo doesn't have** — if there is no frontend typechecker configured, omit
+  `quality:typecheck:frontend` rather than stubbing it.
+- **Verb-set adaptation.** The top-level verbs are not universal. Java has no separate `typecheck` —
+  compilation *is* typechecking — so either fold it into `build` or let `typecheck` cover the frontend
+  half only. Go has no separate `install`. Decide this deliberately and record it in the design doc
+  (§5); an aggregate wrapper that dispatches to nothing is worse than an absent verb.
+- **Existing task runner.** `Makefile`, root `package.json` scripts, `justfile`, Gradle tasks. If one
+  exists this is a migration, not a scaffold: read it, preserve the commands people already rely on,
+  and ask before replacing something that works. **Do not leave two runners competing** — either
+  migrate the old one's entry points into namespaces and delete it, or stop and ask.
+- **CI provider.** `.github/workflows/`, `infra/pipelines/` (Azure), `.gitlab-ci.yml`. Decides
+  `CI_DIRS` and which step-key syntax to scan (`run:` for GitHub Actions; `bash:`/`script:`/`pwsh:`/
+  `powershell:` for Azure Pipelines).
+- **Scripting language for the linters.** Match whatever the repo's existing `tools/`/`scripts/` are
+  written in. §4 ships both a Python and a Node implementation for exactly this reason — a Python
+  linter in a Java+React repo is an unwelcome new toolchain.
+- **go-task availability.** Check for an install step in CI or a mention in README/CONTRIBUTING. If
+  absent, note that developers need it (`brew install go-task`, `go install
+  github.com/go-task/task/v3/cmd/task@latest`, asdf/mise) — ask which the repo prefers, don't assume.
+
+**Where the namespace boundary goes:** mirror the deployable/workspace boundary, never invent one. If
+that boundary is genuinely ambiguous — several backend packages that might deserve separate
+namespaces, or a frontend that is really several independently deployed apps — ask.
+
+**Expect the Gradle/Maven objection.** In a Java repo, Gradle is already a task runner, and a reviewer
+will reasonably ask why you are wrapping a wrapper. The answer — the wrapper unifies *across* Gradle
+and pnpm, which is the entire polyglot problem — belongs in the design doc from §5, or the setup gets
+torn out in review. Inner tasks must **delegate** (`./gradlew :api:test`), never reimplement Gradle's
+own multi-project orchestration.
+
+## 3. Scaffold the files
+
+**Root `Taskfile.yml`** — from `assets/Taskfile.yml.template`. Fill the header comment with the actual
+tools this repo wraps so it stays true, and add one `<namespace>: tasks/<file>.yml` include per
+workspace. Don't add includes for namespaces with nothing to hold yet.
+
+Every task in this file stays a **pure wrapper**: a list of `task: <namespace>:<name>` calls, never a
+`cmds:` entry that shells out. A wrapper exists only where a task composes across namespaces (`setup`,
+`lint`, `validate`, `dev`). A namespace whose public name is already correct (`db:*`, `docs:*`) is
+reached through the include directly and needs no root-level wrapper.
+
+**Namespace files** — copy the templates matching what §2 found:
+
+- `tasks-backend.yml.template` → `tasks/<backend>.yml` — the backend workspace's own lifecycle
+  (`install`, `dev`, codegen).
+- `tasks-frontend.yml.template` → `tasks/<frontend>.yml` — the same for the frontend.
+- `tasks-quality.yml.template` → `tasks/quality.yml` — the shared **internal** namespace holding the
+  lint/format/typecheck/test primitives. Delete any block for a tool the repo lacks.
+- `tasks-workspace.yml.template` → `tasks/workspace.yml` — `init` (git-ignored runtime dirs, if any)
+  and `clean`. If there is no runtime dir, drop `init` and have `setup` skip it.
+
+**Naming convention:**
+
+- `<namespace>:<verb>` or `<namespace>:<verb>:<scope>` for inner tasks — `quality:lint:backend`,
+  `quality:test:contract`.
+- Bare verbs are reserved for the cross-cutting root wrappers: `setup`, `validate`, `lint`, `format`,
+  `typecheck`, `test`, `dev`, `clean`. Single-check shortcuts (`lint:imports` → `quality:lint:imports`)
+  are fine but stay one-line pass-throughs.
+- The namespace name is public vocabulary and need not match the filename — `api: tasks/backend.yml` is
+  deliberate.
+
+**`internal: true`** on every task in `tasks/quality.yml` and on the `install` tasks. These exist to be
+composed, not run directly, so they stay out of `task --list`. Tasks a developer plausibly *would* run
+against one workspace (`api:dev`, `web:test`, `web:build`) stay public.
+
+**Every task gets a non-empty `desc:`** — wrapper and inner alike. `task --list` being self-documenting
+is what makes the vocabulary memorable enough that people stop reaching for the raw tools.
+
+## 4. Enforcement — the half that outlives this skill
+
+Both checkers ship in Python and Node; install the one matching §2's finding, into wherever the repo
+keeps tooling scripts (`tools/lint/`, `scripts/`). Wire **both** into `task lint` as
+`quality:lint:task-layout` and `quality:lint:ci-entrypoint`.
+
+- **`check_task_layout`** (`assets/check_task_layout.py` / `assets/check_task_layout.mjs`) — the
+  structural check, and the one that actually holds the wrapper/inner split. Fails when a task in the
+  root `Taskfile.yml` has a `cmds:` entry that is raw shell rather than a `task:` call, and when any
+  task anywhere lacks a non-empty `desc:`. Generic: it checks YAML shape and needs no per-stack
+  configuration. Both variants take the repo root as `argv[1]`, defaulting to the current directory.
+- **`check_ci_entrypoint`** (`assets/check_ci_entrypoint.py.template` /
+  `assets/check_ci_entrypoint.mjs.template`) — fails when a CI step invokes a wrapped tool directly
+  instead of `task`. Fill `__CI_DIRS__` and `__FORBIDDEN_TOOLS__` from §2 (Python+pnpm: `uv, pnpm, npx,
+  pytest, ruff, mypy`; Java+React: `mvn, gradle, gradlew, npm, pnpm, npx, jest`).
+
+The Python variants need `pyyaml`; the Node variants need the `yaml` package. Add whichever to the
+matching dev-dependency group if it isn't already present.
+
+Run both by hand before wiring them in. **Existing violations are signal, not a bug in the checker** —
+report them; don't weaken the check to make them pass.
+
+## 5. Persistence — so future sessions inherit this
+
+Scaffolding without this step decays. Three artifacts, in leverage order:
+
+1. **CLAUDE.md / AGENTS.md rule** — the layer that governs every future agent session without anything
+   being invoked. Add a short rule to the repo's existing instruction file (create only if absent):
+   the task vocabulary is the only entrypoint; new tasks go in the namespace file that owns them; the
+   root file holds wrappers only; every task carries a `desc:`. Link the design doc.
+2. **Design doc** — a page in the repo's docs (`docs/guides/development/task-vocabulary.md` or
+   equivalent) from `assets/task-vocabulary.md.template`: the verb map, and crucially the *why*,
+   including the verb-set adaptations from §2 and the answer to the Gradle objection. Keep it short and
+   explicitly a map — `task --list` is the source of truth.
+3. **Spec/ADR record** — only if the repo has that tradition (§1). Retrofits skip this; the agent
+   instructions file
+   carries the weight.
+
+## 6. Reconcile mode — safe re-run
+
+When a `Taskfile.yml` already exists, **never regenerate from scratch.** Read the current state, diff
+it against what §3–§5 describe, and report before changing anything:
+
+- Root-file tasks that shell out directly instead of wrapping → propose moving the body into the
+  owning namespace file, leaving a wrapper.
+- Tasks missing `desc:`, or `quality:*` tasks missing `internal: true` → fix in place.
+- Namespaces that exist in `tasks/` but aren't included, or included but missing.
+- Missing linters or CLAUDE.md/AGENTS.md rule from §4–§5 → add.
+- Commands that no longer match the repo's actual tools (a `test:frontend` pointing at Jest in a repo
+  that migrated to Vitest) → report, fix only if unambiguous.
+
+Preserve every task people already rely on. Renaming a task someone has in muscle memory or in a CI
+job is a breaking change — call it out and ask rather than doing it silently.
+
+## 7. Validate
+
+- `task --list` — every task present with a non-empty `desc:`; `internal: true` tasks correctly hidden.
+- `check_task_layout` and `check_ci_entrypoint`, run directly.
+- `task validate` (or its pieces individually if not fully wired) — confirm lint/typecheck/test resolve
+  to real working commands, not unfilled placeholders.
+- `task setup` end to end if feasible.
+
+Report failures with their actual output. A placeholder left unfilled because §2 couldn't determine
+the command is a finding to surface, not something to paper over with a plausible guess.
+
+## 8. Report
+
+State the mode taken and why (especially if detected rather than given). Then: what was created or
+changed; what §2 detected about the repo's real tools, so the user can sanity-check the fills; which
+verbs were adapted or dropped for the stack and why; any placeholder left unfilled; validation results
+with real output; and the one manual step this can't do — installing go-task itself if it isn't already
+available locally and in CI.
+
+Do not commit or push. Leave everything in the working tree.
