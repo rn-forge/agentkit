@@ -32,6 +32,14 @@ of this repository. The installer does not edit shell rc files.
 [the development guide](docs/guides/development.md#external-dependencies) for the
 full dependency table.
 
+Shell completions (zsh, bash, fish) come from Typer/Click and need no extra
+setup beyond enabling them once per shell:
+
+```bash
+agentkit --install-completion   # writes a completion script and prints where
+# restart your shell (or `exec zsh`) to pick it up
+```
+
 ## Quickstart
 
 ```bash
