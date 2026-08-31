@@ -26,6 +26,11 @@ from ..core.manager import (
 from ..core.paths import project_scope_root
 from ..core.state import content_hash, file_hash
 from .common import (
+    AGENT_HELP,
+    DRY_RUN_HELP,
+    JSON_HELP,
+    QUIET_HELP,
+    REPO_HELP,
     command_options,
     console,
     emit,
@@ -55,14 +60,14 @@ _GITIGNORE_ENTRIES = (
 def init_command(
     ctx: typer.Context,
     agent: list[str] | None = typer.Option(
-        None, "--agent", "-a", help="Agent(s); default is all."
+        None, "--agent", "-a", help=AGENT_HELP
     ),
-    repo: Path = typer.Option(Path.cwd(), "--repo", help="Repository directory."),
+    repo: Path = typer.Option(Path.cwd(), "--repo", help=REPO_HELP),
     dry_run: bool = typer.Option(
-        False, "--dry-run", help="Show changes without writing."
+        False, "--dry-run", help=DRY_RUN_HELP
     ),
-    quiet: bool = typer.Option(False, "--quiet", "-q", help="Suppress output."),
-    json_output: bool = typer.Option(False, "--json", help="Emit JSON."),
+    quiet: bool = typer.Option(False, "--quiet", "-q", help=QUIET_HELP),
+    json_output: bool = typer.Option(False, "--json", help=JSON_HELP),
 ) -> None:
     """Scaffold, render, and sync rn-forge agentkit in a repository."""
     command_options(ctx, quiet=quiet, json_output=json_output)
@@ -109,17 +114,17 @@ def _scaffold_gitignore(root: Path, *, dry_run: bool) -> OperationResult:
 def update_command(
     ctx: typer.Context,
     agent: list[str] | None = typer.Option(
-        None, "--agent", "-a", help="Agent(s); default is all."
+        None, "--agent", "-a", help=AGENT_HELP
     ),
     set_value: list[str] | None = typer.Option(
         None, "--set", help="Override dotted KEY=VALUE."
     ),
-    repo: Path = typer.Option(Path.cwd(), "--repo", help="Repository directory."),
+    repo: Path = typer.Option(Path.cwd(), "--repo", help=REPO_HELP),
     dry_run: bool = typer.Option(
-        False, "--dry-run", help="Show changes without writing."
+        False, "--dry-run", help=DRY_RUN_HELP
     ),
-    quiet: bool = typer.Option(False, "--quiet", "-q", help="Suppress output."),
-    json_output: bool = typer.Option(False, "--json", help="Emit JSON."),
+    quiet: bool = typer.Option(False, "--quiet", "-q", help=QUIET_HELP),
+    json_output: bool = typer.Option(False, "--json", help=JSON_HELP),
 ) -> None:
     """Re-render and sync repository-local configuration."""
     command_options(ctx, quiet=quiet, json_output=json_output)
@@ -142,11 +147,11 @@ def update_command(
 def status_command(
     ctx: typer.Context,
     agent: list[str] | None = typer.Option(
-        None, "--agent", "-a", help="Agent(s); default is all."
+        None, "--agent", "-a", help=AGENT_HELP
     ),
-    repo: Path = typer.Option(Path.cwd(), "--repo", help="Repository directory."),
-    quiet: bool = typer.Option(False, "--quiet", "-q", help="Suppress output."),
-    json_output: bool = typer.Option(False, "--json", help="Emit JSON."),
+    repo: Path = typer.Option(Path.cwd(), "--repo", help=REPO_HELP),
+    quiet: bool = typer.Option(False, "--quiet", "-q", help=QUIET_HELP),
+    json_output: bool = typer.Option(False, "--json", help=JSON_HELP),
 ) -> None:
     """Show project initialization and native drift."""
     command_options(ctx, quiet=quiet, json_output=json_output)

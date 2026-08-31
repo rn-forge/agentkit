@@ -30,7 +30,18 @@ from ..core.manager import (
     resolve_config,
     scope_root,
 )
-from .common import command_options, console, emit, fail, options, selected
+from .common import (
+    AGENT_HELP,
+    JSON_HELP,
+    QUIET_HELP,
+    REPO_HELP,
+    command_options,
+    console,
+    emit,
+    fail,
+    options,
+    selected,
+)
 
 app = typer.Typer()
 
@@ -40,12 +51,12 @@ def diff_command(
     ctx: typer.Context,
     scope: Literal["global", "local"] = typer.Option("local", "--scope"),
     agent: list[str] | None = typer.Option(
-        None, "--agent", "-a", help="Agent(s); default is all."
+        None, "--agent", "-a", help=AGENT_HELP
     ),
     set_value: list[str] | None = typer.Option(
         None, "--set", help="Override dotted KEY=VALUE."
     ),
-    repo: Path = typer.Option(Path.cwd(), "--repo", help="Repository directory."),
+    repo: Path = typer.Option(Path.cwd(), "--repo", help=REPO_HELP),
     check: bool = typer.Option(False, "--check", help="Exit 2 when drift exists."),
     write: bool = typer.Option(
         False,
@@ -60,8 +71,8 @@ def diff_command(
         "--all",
         help="Include the packaged defaults layer in the key table.",
     ),
-    quiet: bool = typer.Option(False, "--quiet", "-q", help="Suppress output."),
-    json_output: bool = typer.Option(False, "--json", help="Emit JSON."),
+    quiet: bool = typer.Option(False, "--quiet", "-q", help=QUIET_HELP),
+    json_output: bool = typer.Option(False, "--json", help=JSON_HELP),
 ) -> None:
     """Show layered key changes and rendered-vs-native drift."""
     command_options(ctx, quiet=quiet, json_output=json_output)
@@ -248,13 +259,13 @@ def doctor_command(
     ctx: typer.Context,
     scope: Literal["global", "local"] = typer.Option("local", "--scope"),
     agent: list[str] | None = typer.Option(
-        None, "--agent", "-a", help="Agent(s); default is all."
+        None, "--agent", "-a", help=AGENT_HELP
     ),
-    repo: Path = typer.Option(Path.cwd(), "--repo", help="Repository directory."),
+    repo: Path = typer.Option(Path.cwd(), "--repo", help=REPO_HELP),
     check: bool = typer.Option(False, "--check", help="Exit 2 when drift exists."),
     show_all: bool = typer.Option(False, "--all", help="Include checks that passed."),
-    quiet: bool = typer.Option(False, "--quiet", "-q", help="Suppress output."),
-    json_output: bool = typer.Option(False, "--json", help="Emit JSON."),
+    quiet: bool = typer.Option(False, "--quiet", "-q", help=QUIET_HELP),
+    json_output: bool = typer.Option(False, "--json", help=JSON_HELP),
 ) -> None:
     """Validate schemas, templates, paths, state, binaries, and drift."""
     command_options(ctx, quiet=quiet, json_output=json_output)
@@ -333,8 +344,8 @@ def _render_doctor(results: list[CheckResult], *, show_all: bool) -> None:
 @app.command("version")
 def version_command(
     ctx: typer.Context,
-    quiet: bool = typer.Option(False, "--quiet", "-q", help="Suppress output."),
-    json_output: bool = typer.Option(False, "--json", help="Emit JSON."),
+    quiet: bool = typer.Option(False, "--quiet", "-q", help=QUIET_HELP),
+    json_output: bool = typer.Option(False, "--json", help=JSON_HELP),
 ) -> None:
     """Show agentkit and adapter versions."""
     command_options(ctx, quiet=quiet, json_output=json_output)

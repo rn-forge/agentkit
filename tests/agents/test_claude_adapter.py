@@ -35,7 +35,8 @@ def test_claude_artifacts_and_scope_defaults() -> None:
         "hooks/unwrap_md.py",
     ]
     skill_keys = global_keys[10:]
-    assert skill_keys and all(key.startswith("skills/") for key in skill_keys)
+    assert skill_keys
+    assert all(key.startswith("skills/") for key in skill_keys)
     assert "skills/go-task-setup/SKILL.md" in skill_keys
     assert "skills/mkdocs-site-setup/SKILL.md" in skill_keys
     assert "skills/sonar-cleanup/SKILL.md" in skill_keys

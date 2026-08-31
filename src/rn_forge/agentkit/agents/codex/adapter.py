@@ -17,6 +17,10 @@ from ..base import AgentAdapter, Scope
 from .schema import CodexConfig
 
 
+_AGENTS_MD = "AGENTS.md"
+_HOOKS_JSON = "hooks.json"
+
+
 class CodexAdapter(AgentAdapter):
     """Manage Codex global and repository-local configuration files."""
 
@@ -42,13 +46,13 @@ class CodexAdapter(AgentAdapter):
             return [
                 config,
                 Artifact(
-                    "AGENTS.md",
-                    Path("AGENTS.md"),
+                    _AGENTS_MD,
+                    Path(_AGENTS_MD),
                     template="AGENTS.local.md.j2",
                     seed_only=True,
                 ),
                 Artifact(
-                    "hooks.json",
+                    _HOOKS_JSON,
                     Path(".codex/hooks.json"),
                     source=self._assets_dir / "hooks.local.json",
                 ),
@@ -63,14 +67,14 @@ class CodexAdapter(AgentAdapter):
         return [
             config,
             Artifact(
-                "AGENTS.md",
+                _AGENTS_MD,
                 Path(".codex/AGENTS.md"),
                 template="AGENTS.md.j2",
             ),
             Artifact(
-                "hooks.json",
+                _HOOKS_JSON,
                 Path(".codex/hooks.json"),
-                source=self._assets_dir / "hooks.json",
+                source=self._assets_dir / _HOOKS_JSON,
             ),
             Artifact(
                 "hooks/guard-core.sh",
@@ -152,7 +156,7 @@ class CodexAdapter(AgentAdapter):
         """Render shared instruction templates and delegate other artifacts."""
         if artifact.key.startswith("skills/") and artifact.template is not None:
             return self.render_skill_artifact(artifact)
-        if artifact.key == "AGENTS.md":
+        if artifact.key == _AGENTS_MD:
             assert artifact.template is not None
             return RenderEngine(self._shared_instructions_dir).render_template(
                 artifact.template, {}

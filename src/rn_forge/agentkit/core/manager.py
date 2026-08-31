@@ -98,7 +98,7 @@ def apply_adapter(
     Raises:
         ValueError: The merged configuration fails adapter validation.
     """
-    merged, _ = resolve_config(adapter, scope, repo_root)
+    merged, _ = resolve_config(adapter, scope, repo_root, overrides)
     errors = adapter.validate(merged.config)
     if errors:
         raise ValueError("; ".join(errors))

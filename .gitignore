@@ -16,6 +16,7 @@ wheels/
 .out
 .pytest_cache
 .ruff_cache
+.sonar-cleanup/
 .coverage
 coverage.xml
 

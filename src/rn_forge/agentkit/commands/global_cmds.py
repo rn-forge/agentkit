@@ -23,6 +23,10 @@ from ..core.manager import (
 from ..core.paths import global_root
 from ..core.state import content_hash, file_hash
 from .common import (
+    AGENT_HELP,
+    DRY_RUN_HELP,
+    JSON_HELP,
+    QUIET_HELP,
     command_options,
     console,
     emit,
@@ -40,16 +44,16 @@ app = typer.Typer(help="Manage user-wide agent configuration.", no_args_is_help=
 def apply_command(
     ctx: typer.Context,
     agent: list[str] | None = typer.Option(
-        None, "--agent", "-a", help="Agent(s); default is all."
+        None, "--agent", "-a", help=AGENT_HELP
     ),
     set_value: list[str] | None = typer.Option(
         None, "--set", help="Override dotted KEY=VALUE."
     ),
     dry_run: bool = typer.Option(
-        False, "--dry-run", help="Show changes without writing."
+        False, "--dry-run", help=DRY_RUN_HELP
     ),
-    quiet: bool = typer.Option(False, "--quiet", "-q", help="Suppress output."),
-    json_output: bool = typer.Option(False, "--json", help="Emit JSON."),
+    quiet: bool = typer.Option(False, "--quiet", "-q", help=QUIET_HELP),
+    json_output: bool = typer.Option(False, "--json", help=JSON_HELP),
 ) -> None:
     """Render and sync global configuration."""
     command_options(ctx, quiet=quiet, json_output=json_output)
@@ -72,13 +76,13 @@ def apply_command(
 def sync_command(
     ctx: typer.Context,
     agent: list[str] | None = typer.Option(
-        None, "--agent", "-a", help="Agent(s); default is all."
+        None, "--agent", "-a", help=AGENT_HELP
     ),
     dry_run: bool = typer.Option(
-        False, "--dry-run", help="Show changes without writing."
+        False, "--dry-run", help=DRY_RUN_HELP
     ),
-    quiet: bool = typer.Option(False, "--quiet", "-q", help="Suppress output."),
-    json_output: bool = typer.Option(False, "--json", help="Emit JSON."),
+    quiet: bool = typer.Option(False, "--quiet", "-q", help=QUIET_HELP),
+    json_output: bool = typer.Option(False, "--json", help=JSON_HELP),
 ) -> None:
     """Re-sync staged global files without rendering."""
     command_options(ctx, quiet=quiet, json_output=json_output)
@@ -97,14 +101,14 @@ def sync_command(
 def reset_command(
     ctx: typer.Context,
     agent: list[str] | None = typer.Option(
-        None, "--agent", "-a", help="Agent(s); default is all."
+        None, "--agent", "-a", help=AGENT_HELP
     ),
     yes: bool = typer.Option(False, "--yes", "-y", help="Skip confirmation."),
     dry_run: bool = typer.Option(
-        False, "--dry-run", help="Show changes without writing."
+        False, "--dry-run", help=DRY_RUN_HELP
     ),
-    quiet: bool = typer.Option(False, "--quiet", "-q", help="Suppress output."),
-    json_output: bool = typer.Option(False, "--json", help="Emit JSON."),
+    quiet: bool = typer.Option(False, "--quiet", "-q", help=QUIET_HELP),
+    json_output: bool = typer.Option(False, "--json", help=JSON_HELP),
 ) -> None:
     """Back up and restore global configuration to built-in defaults."""
     command_options(ctx, quiet=quiet, json_output=json_output)
@@ -127,8 +131,8 @@ def reset_command(
 @app.command("list")
 def list_command(
     ctx: typer.Context,
-    quiet: bool = typer.Option(False, "--quiet", "-q", help="Suppress output."),
-    json_output: bool = typer.Option(False, "--json", help="Emit JSON."),
+    quiet: bool = typer.Option(False, "--quiet", "-q", help=QUIET_HELP),
+    json_output: bool = typer.Option(False, "--json", help=JSON_HELP),
 ) -> None:
     """List managed adapters and their global status."""
     command_options(ctx, quiet=quiet, json_output=json_output)

@@ -37,6 +37,18 @@ def test_apply_is_idempotent_and_tracks_state(isolated_env) -> None:
     )
 
 
+def test_apply_forwards_overrides_to_the_rendered_config(isolated_env) -> None:
+    _, _, repo = isolated_env
+    adapter = CodexAdapter()
+    write_config(global_root() / "codex" / "config.toml", {"model": "gpt-5"})
+
+    applied = apply_adapter(
+        adapter, "global", repo, overrides={"model": "overridden-model"}
+    )[0]
+
+    assert 'model = "overridden-model"' in applied.rendered_path.read_text()
+
+
 def test_dry_run_writes_nothing_and_manual_native_is_backed_up(isolated_env) -> None:
     _, _, repo = isolated_env
     adapter = CodexAdapter()

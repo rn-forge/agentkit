@@ -67,15 +67,14 @@ class ConfigMerger:
         for index, layer in enumerate(layers):
             if isinstance(layer, tuple):
                 named.append(layer)
+                continue
+            if layer_names and index < len(layer_names):
+                name = layer_names[index]
+            elif index < len(conventional):
+                name = conventional[index]
             else:
-                name = (
-                    layer_names[index]
-                    if layer_names and index < len(layer_names)
-                    else conventional[index]
-                    if index < len(conventional)
-                    else f"layer-{index + 1}"
-                )
-                named.append((name, layer))
+                name = f"layer-{index + 1}"
+            named.append((name, layer))
 
         merged: dict[str, Any] = {}
         provenance: dict[str, str] = {}

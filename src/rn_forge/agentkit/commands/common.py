@@ -21,6 +21,12 @@ from ..core.manager import OperationResult
 
 console = Console()
 
+AGENT_HELP = "Agent(s); default is all."
+DRY_RUN_HELP = "Show changes without writing."
+QUIET_HELP = "Suppress output."
+JSON_HELP = "Emit JSON."
+REPO_HELP = "Repository directory."
+
 
 def options(ctx: typer.Context) -> dict[str, bool]:
     """Return normalized quiet and JSON flags from the root Typer context."""

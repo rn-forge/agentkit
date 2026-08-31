@@ -2,7 +2,7 @@
 # agentkit: Codex destructive-command guard adapter. Requires: jq
 
 LIB="${0%/*}/../../_common/hooks/guard-core.sh"
-[ -f "$LIB" ] || { echo "BLOCKED [pre-bash-guard]: guard library missing. Re-run agentkit global apply." >&2; exit 2; }
+[[ -f "$LIB" ]] || { echo "BLOCKED [pre-bash-guard]: guard library missing. Re-run agentkit global apply." >&2; exit 2; }
 # shellcheck source=/dev/null
 . "$LIB"
 

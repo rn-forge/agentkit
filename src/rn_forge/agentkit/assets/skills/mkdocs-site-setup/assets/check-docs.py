@@ -24,7 +24,7 @@ MKDOCS_YML = ROOT / "mkdocs.yml"
 GITIGNORE = ROOT / ".gitignore"
 
 LINK_RE = re.compile(r"\[[^\]]*\]\(([^)]+)\)")
-HEADER_RE = re.compile(r"^(#{1,6})\s+(.+)$", re.MULTILINE)
+HEADER_RE = re.compile(r"^(#{1,6})[ \t]+(.+)$", re.MULTILINE)
 FENCED_CODE_RE = re.compile(r"```.*?```", re.DOTALL)
 
 

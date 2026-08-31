@@ -34,7 +34,8 @@ def test_bundled_resources_copy_verbatim_and_keep_foreign_placeholders() -> None
     adapter = ClaudeAdapter()
     workflow = _skills(adapter)["skills/mkdocs-site-setup/assets/docs-deploy.yml.template"]
 
-    assert workflow.template is None and workflow.source is not None
+    assert workflow.template is None
+    assert workflow.source is not None
     assert "${{" in adapter.render_artifact(workflow, {}, "global").decode()
 
 

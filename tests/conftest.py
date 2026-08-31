@@ -1,12 +1,11 @@
 from pathlib import Path
 
 import pytest
-from pytest import MonkeyPatch
 
 
 @pytest.fixture(autouse=True)
 def isolated_env(
-    tmp_path: Path, monkeypatch: MonkeyPatch
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> tuple[Path, Path, Path]:
     """Isolate native and managed agent paths beneath pytest's temp directory."""
     home = tmp_path / "home"

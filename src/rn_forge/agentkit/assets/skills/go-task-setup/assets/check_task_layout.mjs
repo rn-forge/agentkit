@@ -68,8 +68,10 @@ function main() {
 
   const document = parse(readFileSync(rootTaskfile, "utf8"));
   for (const [name, spec] of Object.entries(taskSpecs(document))) {
-    errors.push(...checkDesc("Taskfile.yml", name, spec));
-    errors.push(...checkWrapperOnly("Taskfile.yml", name, spec));
+    errors.push(
+      ...checkDesc("Taskfile.yml", name, spec),
+      ...checkWrapperOnly("Taskfile.yml", name, spec),
+    );
   }
 
   const tasksDir = join(root, "tasks");

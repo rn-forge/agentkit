@@ -4,8 +4,8 @@
 INPUT=$(cat)
 FILE=$(echo "$INPUT" | jq -r '.tool_input.file_path // .tool_input.path // ""' 2>/dev/null || true)
 
-[ -z "$FILE" ] && exit 0
-[ ! -f "$FILE" ] && exit 0
+[[ -z "$FILE" ]] && exit 0
+[[ ! -f "$FILE" ]] && exit 0
 
 run_formatter() {
   local formatter="$1"
@@ -13,6 +13,7 @@ run_formatter() {
   if ! "$@"; then
     echo "WARNING [post-edit-format]: $formatter failed for '$FILE'." >&2
   fi
+  return 0
 }
 
 case "$FILE" in

@@ -18,6 +18,9 @@ from ..base import AgentAdapter, Scope
 from .schema import ClaudeConfig
 
 
+_CLAUDE_MD = "CLAUDE.md"
+
+
 class ClaudeAdapter(AgentAdapter):
     """Manage Claude Code global and repository-local configuration files."""
 
@@ -44,8 +47,8 @@ class ClaudeAdapter(AgentAdapter):
             return [
                 config,
                 Artifact(
-                    "CLAUDE.md",
-                    Path("CLAUDE.md"),
+                    _CLAUDE_MD,
+                    Path(_CLAUDE_MD),
                     template="CLAUDE.local.md.j2",
                     seed_only=True,
                 ),
@@ -60,7 +63,7 @@ class ClaudeAdapter(AgentAdapter):
         return [
             config,
             Artifact(
-                "CLAUDE.md",
+                _CLAUDE_MD,
                 Path(".claude/CLAUDE.md"),
                 template="CLAUDE.md.j2",
             ),
@@ -152,7 +155,7 @@ class ClaudeAdapter(AgentAdapter):
         """Render shared instruction templates and delegate other artifacts."""
         if artifact.key.startswith("skills/") and artifact.template is not None:
             return self.render_skill_artifact(artifact)
-        if artifact.key in {"CLAUDE.md", "output-styles/concise.md"}:
+        if artifact.key in {_CLAUDE_MD, "output-styles/concise.md"}:
             assert artifact.template is not None
             return RenderEngine(self._shared_instructions_dir).render_template(
                 artifact.template, {}
