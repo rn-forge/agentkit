@@ -1,0 +1,49 @@
+{
+  "hooks": {
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "$HOME/.rn-forge/share/agentkit/codex/hooks/user-prompt-secret-guard.sh",
+            "statusMessage": "Checking prompt"
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "$HOME/.rn-forge/share/agentkit/codex/hooks/pre-bash-guard.sh",
+            "statusMessage": "Checking command"
+          }
+        ]
+      },
+      {
+        "matcher": "Edit|Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "$HOME/.rn-forge/share/agentkit/codex/hooks/pre-write-protect.sh",
+            "statusMessage": "Checking protected path"
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Edit|Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "$HOME/.rn-forge/share/agentkit/codex/hooks/post-write-unwrap-md.sh",
+            "statusMessage": "Unwrapping markdown"
+          }
+        ]
+      }
+    ]
+  }
+}

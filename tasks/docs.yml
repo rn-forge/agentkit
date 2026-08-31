@@ -1,0 +1,23 @@
+version: "3"
+
+# The documentation site. Public namespace — `task docs:serve` is something a
+# developer runs directly while writing prose.
+#
+# There is deliberately no scripts/gen-docs.sh: this repo has no frontend
+# reference to generate, so the whole build is one mkdocs invocation and a
+# shell script wrapping it would just be a second runner competing with this
+# one. See docs/architecture/docs-system.md.
+
+vars:
+  MKDOCS_SITE_DIR: .docs-site
+
+tasks:
+  build:
+    desc: Build the MkDocs site into .docs-site/ (or $1 when given).
+    cmds:
+      - uv run --group docs mkdocs build --strict --site-dir "{{.CLI_ARGS | default .MKDOCS_SITE_DIR}}"
+
+  serve:
+    desc: Serve the docs site locally with live reload on http://127.0.0.1:8000.
+    cmds:
+      - uv run --group docs mkdocs serve

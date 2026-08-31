@@ -1,0 +1,201 @@
+"""Merge adapter configuration layers and retain per-key provenance.
+
+The manager uses :class:`ConfigMerger` for defaults, managed sources, and CLI
+overrides; adapter schemas supply field-specific list merge strategies.
+"""
+
+from __future__ import annotations
+
+import copy
+import json
+from collections.abc import Iterable, Mapping, Sequence
+from dataclasses import dataclass
+from typing import Any, Iterator, cast
+
+import tomlkit
+from pydantic import BaseModel
+
+
+@dataclass(frozen=True, slots=True)
+class MergeResult:
+    """Merged config and a dotted-key to source-layer provenance map.
+
+    Attributes:
+        config: Final deep-merged configuration.
+        provenance: Highest-precedence source for each dotted key.
+    """
+
+    config: dict[str, Any]
+    provenance: dict[str, str]
+
+    def __iter__(self) -> Iterator[dict[str, Any] | dict[str, str]]:
+        yield self.config
+        yield self.provenance
+
+
+class ConfigMerger:
+    """Deep-merge configuration layers in increasing precedence order.
+
+    Args:
+        schema: Optional Pydantic model used to infer append-list paths.
+        append_paths: Additional dotted paths whose lists append rather than
+            replace.
+    """
+
+    def __init__(
+        self,
+        schema: type[BaseModel] | None = None,
+        *,
+        append_paths: Iterable[str] = (),
+    ) -> None:
+        inferred: set[str] = _append_paths_from_schema(schema) if schema else set()
+        self.append_paths = inferred | set(append_paths)
+
+    def merge(
+        self,
+        *layers: Mapping[str, Any] | tuple[str, Mapping[str, Any]],
+        layer_names: Sequence[str] | None = None,
+    ) -> MergeResult:
+        """Merge mappings or ``(name, mapping)`` pairs.
+
+        Unnamed layers use the conventional names defaults, global, local,
+        overrides, then layer-N. Dictionaries merge recursively; lists replace
+        unless their dotted field path is marked with ``merge_strategy=append``.
+        """
+        conventional = ("defaults", "global", "local", "overrides")
+        named: list[tuple[str, Mapping[str, Any]]] = []
+        for index, layer in enumerate(layers):
+            if isinstance(layer, tuple):
+                named.append(layer)
+                continue
+            if layer_names and index < len(layer_names):
+                name = layer_names[index]
+            elif index < len(conventional):
+                name = conventional[index]
+            else:
+                name = f"layer-{index + 1}"
+            named.append((name, layer))
+
+        merged: dict[str, Any] = {}
+        provenance: dict[str, str] = {}
+        for name, layer in named:
+            _deep_merge(merged, layer, name, provenance, self.append_paths)
+        return MergeResult(merged, provenance)
+
+
+def defaults_for(schema: type[BaseModel]) -> dict[str, Any]:
+    """Return fully materialized, non-null defaults for a Pydantic schema."""
+    return schema().model_dump(mode="python", exclude_none=True)
+
+
+def parse_cli_overrides(values: Iterable[str]) -> dict[str, Any]:
+    """Turn repeated ``--set dotted.key=value`` expressions into a mapping.
+
+    Args:
+        values: Override expressions whose values use JSON or TOML scalar syntax.
+
+    Returns:
+        A nested mapping ready to merge as the highest-precedence layer.
+
+    Raises:
+        ValueError: An expression lacks a key or collides with a scalar path.
+    """
+    result: dict[str, Any] = {}
+    for expression in values:
+        if "=" not in expression:
+            raise ValueError(f"Override must be KEY=VALUE: {expression!r}")
+        key, raw = expression.split("=", 1)
+        parts = [part for part in key.strip().split(".") if part]
+        if not parts:
+            raise ValueError(f"Override key cannot be empty: {expression!r}")
+        cursor: dict[str, Any] = result
+        for part in parts[:-1]:
+            existing: Any = cursor.setdefault(part, {})
+            if not isinstance(existing, dict):
+                raise ValueError(f"Override collides with scalar key: {key!r}")
+            cursor = cast(dict[str, Any], existing)
+        cursor[parts[-1]] = _parse_scalar(raw)
+    return result
+
+
+def _parse_scalar(raw: str) -> Any:
+    stripped = raw.strip()
+    try:
+        return json.loads(stripped)
+    except json.JSONDecodeError:
+        try:
+            item: Any = tomlkit.loads(f"value = {stripped}\n")["value"]
+            return item.unwrap()
+        except Exception:
+            return raw
+
+
+def _deep_merge(
+    target: dict[str, Any],
+    incoming: Mapping[str, Any],
+    layer: str,
+    provenance: dict[str, str],
+    append_paths: set[str],
+    prefix: str = "",
+) -> None:
+    for key, value in incoming.items():
+        key = str(key)
+        path = f"{prefix}.{key}" if prefix else key
+        if isinstance(value, Mapping) and isinstance(target.get(key), dict):
+            _deep_merge(
+                cast(dict[str, Any], target[key]),
+                cast(Mapping[str, Any], value),
+                layer,
+                provenance,
+                append_paths,
+                path,
+            )
+            provenance[path] = layer
+        elif isinstance(value, Mapping):
+            target[key] = {}
+            _deep_merge(
+                cast(dict[str, Any], target[key]),
+                cast(Mapping[str, Any], value),
+                layer,
+                provenance,
+                append_paths,
+                path,
+            )
+            provenance[path] = layer
+        elif (
+            path in append_paths
+            and isinstance(value, list)
+            and isinstance(target.get(key), list)
+        ):
+            current = cast(list[Any], target[key])
+            incoming_list = cast(list[Any], value)
+            target[key] = copy.deepcopy(current) + copy.deepcopy(incoming_list)
+            provenance[path] = layer
+        else:
+            target[key] = copy.deepcopy(cast(Any, value))
+            _mark_provenance(value, path, layer, provenance)
+
+
+def _mark_provenance(
+    value: Any, path: str, layer: str, provenance: dict[str, str]
+) -> None:
+    provenance[path] = layer
+    if isinstance(value, Mapping):
+        mapping = cast(Mapping[Any, Any], value)
+        for key, child in mapping.items():
+            _mark_provenance(child, f"{path}.{key}", layer, provenance)
+
+
+def _append_paths_from_schema(schema: type[BaseModel], prefix: str = "") -> set[str]:
+    result: set[str] = set()
+    for name, field in schema.model_fields.items():
+        path = f"{prefix}.{name}" if prefix else name
+        extra = field.json_schema_extra
+        if isinstance(extra, dict):
+            typed_extra = cast(dict[str, Any], extra)
+            if typed_extra.get("merge_strategy") == "append":
+                result.add(path)
+        annotation = field.annotation
+        if isinstance(annotation, type) and issubclass(annotation, BaseModel):
+            result.update(_append_paths_from_schema(annotation, path))
+    return result

@@ -1,0 +1,23 @@
+version: "3"
+
+tasks:
+  install:
+    desc: Install the frontend workspace (locked).
+    internal: true
+    cmds:
+      - __FRONTEND_INSTALL_CMD__
+
+  dev:
+    desc: Run the frontend dev server.
+    cmds:
+      - __FRONTEND_DEV_CMD__
+
+  build:
+    desc: Production build of the frontend app.
+    cmds:
+      - __FRONTEND_BUILD_CMD__
+
+  test:
+    desc: Run the frontend test suite.
+    cmds:
+      - __FRONTEND_TEST_CMD__

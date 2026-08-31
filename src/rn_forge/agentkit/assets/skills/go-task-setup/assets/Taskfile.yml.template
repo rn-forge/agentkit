@@ -1,0 +1,75 @@
+version: "3"
+
+# `.env` (git-ignored — see .env.example) is loaded here so every `task ...`
+# invocation sees local overrides without a developer having to `export`
+# them by hand. Absent is fine — task treats a missing dotenv file as
+# "nothing to load", not an error.
+dotenv: [".env"]
+
+# The only entrypoint. Nobody — human or CI — invokes __PY_RUN__, __FRONTEND_PM__,
+# __TEST_CMD__, __LINT_CMD__ or __TYPECHECK_CMD__ directly; tools/lint/check_ci_entrypoint.py
+# enforces that in CI definitions.
+#
+# This file holds wrappers only: every task below is a list of calls into
+# tasks/*.yml. Anything that shells out to __PY_RUN__, __FRONTEND_PM__, docker or
+# the filesystem lives in the namespace file that owns it. Namespaces whose
+# public name is already correct are reached through the include directly
+# and carry no wrapper here. A wrapper only exists where a task composes
+# calls across namespaces (setup, lint, dev, validate, ...).
+
+includes:
+  api: tasks/backend.yml
+  web: tasks/frontend.yml
+  quality: tasks/quality.yml
+  workspace: tasks/workspace.yml
+  __EXTRA_INCLUDES__
+
+tasks:
+  setup:
+    desc: Install both workspaces and any local runtime dependencies.
+    cmds:
+      - task: api:install
+      - task: web:install
+      - task: workspace:init
+
+  validate:
+    desc: The aggregate gate — lint, typecheck, test. Fails if any one fails.
+    cmds:
+      - task: lint
+      - task: typecheck
+      - task: test
+
+  lint:
+    desc: Run every lint — backend and frontend.
+    cmds:
+      - task: quality:lint:backend
+      - task: quality:lint:frontend
+
+  format:
+    desc: Format Python and frontend code in place.
+    cmds:
+      - task: quality:format:backend
+      - task: quality:format:frontend
+
+  typecheck:
+    desc: Static type-check the backend and frontend.
+    cmds:
+      - task: quality:typecheck:backend
+      - task: quality:typecheck:frontend
+
+  test:
+    desc: Run the backend and frontend test suites.
+    cmds:
+      - task: quality:test:backend
+      - task: quality:test:frontend
+
+  dev:
+    desc: Run the backend and frontend dev servers together, in parallel.
+    deps:
+      - task: api:dev
+      - task: web:dev
+
+  clean:
+    desc: Remove build outputs and caches.
+    cmds:
+      - task: workspace:clean

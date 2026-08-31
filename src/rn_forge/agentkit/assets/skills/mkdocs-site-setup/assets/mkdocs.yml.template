@@ -1,0 +1,37 @@
+site_name: __PROJECT__ engineering guide
+site_description: Architecture, development, operations, and API reference for __PROJECT__.
+docs_dir: docs
+strict: true
+theme:
+  name: material
+  features:
+    - navigation.sections
+    - navigation.top
+    - content.code.copy
+nav:
+  - Home: index.md
+  - Architecture:
+      - Overview: architecture/index.md
+  - Guides:
+      - Development: guides/development.md
+  - Reference:
+      - Python API: reference/python-api.md
+      - TypeScript modules: reference/web/index.md
+      # TypeDoc emits one page per module; they're reachable from the index
+      # above rather than pinned here, so adding a module needs no nav edit.
+plugins:
+  - search
+  - mkdocstrings:
+      handlers:
+        python:
+          paths: [__PYTHON_SRC_PATH__]
+          options:
+            docstring_style: google
+            show_source: true
+            show_root_heading: true
+markdown_extensions:
+  - admonition
+  - attr_list
+  - pymdownx.highlight:
+      anchor_linenums: true
+  - pymdownx.superfences

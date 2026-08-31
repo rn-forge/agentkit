@@ -1,0 +1,81 @@
+version: "3"
+
+# The only entrypoint. Nobody — human or CI — invokes `uv`, `pytest`, `ruff`,
+# `pyright` or `mkdocs` directly; scripts/check_ci_entrypoint.py enforces that
+# for every CI definition.
+#
+# This file holds wrappers only: every task below is a list of calls into
+# tasks/*.yml. Anything that shells out lives in the namespace file that owns
+# it. Namespaces whose public name is already correct (docs:*) are reached
+# through the include directly and carry no wrapper here. A wrapper only exists
+# where a task composes calls across namespaces, or where a bare verb is the
+# memorable name for a single primitive.
+#
+# See docs/guides/task-vocabulary.md for the verb map and the rationale.
+
+env:
+  # Keeping the uv cache inside the repo avoids competing with other rn-forge
+  # checkouts for a shared cache dir. Namespace tasks that must not share it
+  # (packaging) override this locally.
+  UV_CACHE_DIR: .uv-cache
+
+includes:
+  quality: tasks/quality.yml
+  docs: tasks/docs.yml
+  workspace: tasks/workspace.yml
+
+tasks:
+  setup:
+    desc: Install the project and its dev + docs dependency groups.
+    cmds:
+      - task: workspace:install
+
+  validate:
+    desc: The aggregate gate — lint, typecheck, test. Fails if any one fails.
+    cmds:
+      - task: lint
+      - task: typecheck
+      - task: test
+
+  lint:
+    desc: Every lint — Python, task layout, CI entrypoints, and docs links.
+    cmds:
+      - task: quality:lint:python
+      - task: quality:lint:task-layout
+      - task: quality:lint:ci-entrypoint
+      - task: quality:lint:docs
+
+  format:
+    desc: Format Python code in place.
+    cmds:
+      - task: quality:format:python
+
+  typecheck:
+    desc: Static type-check the package in pyright strict mode.
+    cmds:
+      - task: quality:typecheck:python
+
+  test:
+    desc: Run the pytest suite.
+    cmds:
+      - task: quality:test:python
+
+  test:coverage:
+    desc: Run the pytest suite with an XML coverage report (used by CI/Sonar).
+    cmds:
+      - task: quality:test:coverage
+
+  version:
+    desc: Print the package version from pyproject.toml.
+    cmds:
+      - task: workspace:version
+
+  build:
+    desc: Build the wheel and sdist into dist/.
+    cmds:
+      - task: workspace:build
+
+  clean:
+    desc: Remove build outputs, caches, and the rendered docs site.
+    cmds:
+      - task: workspace:clean

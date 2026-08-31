@@ -1,0 +1,56 @@
+version: "3"
+
+# The shared "internal implementation" namespace. Holds the actual lint/
+# test/typecheck/format primitives that the cross-cutting root wrappers
+# (task lint, task test, ...) compose. Everything here is `internal: true`
+# — it exists to be called from a wrapper, not run directly by a developer.
+
+tasks:
+  lint:python:
+    desc: Lint src/ and tests/ with ruff.
+    internal: true
+    cmds:
+      - uv run ruff check src tests
+
+  lint:task-layout:
+    desc: Enforce the wrapper/inner split and non-empty desc on every task.
+    internal: true
+    cmds:
+      - uv run python scripts/check_task_layout.py .
+
+  lint:ci-entrypoint:
+    desc: Fail if a CI step invokes a wrapped tool instead of `task`.
+    internal: true
+    cmds:
+      - uv run python scripts/check_ci_entrypoint.py .
+
+  lint:docs:
+    desc: Check the docs site for broken links, bad anchors, and orphan pages.
+    internal: true
+    cmds:
+      - uv run --group docs python scripts/check-docs.py .
+
+  format:python:
+    desc: Format src/ and tests/ in place with ruff.
+    internal: true
+    cmds:
+      - uv run ruff format src tests
+      - uv run ruff check --fix src tests
+
+  typecheck:python:
+    desc: Type-check src/ with pyright in strict mode.
+    internal: true
+    cmds:
+      - uv run pyright src
+
+  test:python:
+    desc: Run the pytest suite quietly.
+    internal: true
+    cmds:
+      - uv run pytest -q
+
+  test:coverage:
+    desc: Run the pytest suite with an XML coverage report for Sonar.
+    internal: true
+    cmds:
+      - uv run pytest -q --cov=rn_forge.agentkit --cov-report=xml:coverage.xml

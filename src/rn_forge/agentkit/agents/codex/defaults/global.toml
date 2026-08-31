@@ -1,0 +1,19 @@
+personality = "pragmatic"
+model_reasoning_effort = "medium"
+model_reasoning_summary = "concise"
+approval_policy = "on-request"
+sandbox_mode = "workspace-write"
+
+[sandbox_workspace_write]
+network_access = false
+
+[features]
+hooks = true
+
+# Safe only because the base workspace-write sandbox and disabled network carry over.
+# approval_policy = "never" bypasses publish/deploy approval prompts; the bash guard is the only backstop.
+[profiles.trusted]
+approval_policy = "never"
+
+[profiles.deep]
+model_reasoning_effort = "high"

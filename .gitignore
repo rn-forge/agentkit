@@ -16,3 +16,17 @@ wheels/
 .out
 .pytest_cache
 .ruff_cache
+.sonar-cleanup/
+.coverage
+coverage.xml
+
+# BEGIN rn-forge agentkit
+.rn-forge/agentkit/*/rendered/
+.rn-forge/agentkit/*/hooks/
+.rn-forge/agentkit/_common/
+.rn-forge/agentkit/state.json
+.rn-forge/agentkit/backups/
+# END rn-forge agentkit
+
+# docs site build output
+.docs-site

@@ -1,0 +1,28 @@
+#!/usr/bin/env bash
+# Build the complete __PROJECT__ documentation site. docs/ is the single home
+# for all documentation sources (one MkDocs site covering backend and
+# frontend reference plus handwritten prose); the rendered HTML cannot live
+# inside docs/ itself (MkDocs refuses a site_dir nested under docs_dir), so
+# it builds to __SITE_OUT_DEFAULT__ for local preview by default, or to $1
+# when given (CI passes a temp dir for the GitHub Pages upload).
+#
+# Layout under docs/:
+#   docs/architecture/, docs/guides/   handwritten lifecycle documentation (checked in)
+#   docs/reference/python-api.md       handwritten, renders backend reference via mkdocstrings directives
+#   docs/reference/web/                frontend reference, generated (TypeDoc, or compodoc for Angular)
+#
+# Everything under docs/ is handwritten and checked in except docs/reference/web/,
+# which is generated here and gitignored.
+set -euo pipefail
+
+root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+cd "$root"
+
+echo "==> frontend reference"
+__FRONTEND_SYNC_STEP__
+rm -rf docs/reference/web
+__FRONTEND_DOC_STEP__
+__COMPONENT_DOC_STEP__
+
+echo "==> site"
+uv run --group docs mkdocs build --site-dir "${1:-__SITE_OUT_DEFAULT__}"

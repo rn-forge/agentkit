@@ -1,0 +1,80 @@
+---
+name: sonar-cleanup
+description: Fetch all open SonarCloud/SonarQube findings for the current repo via the sonarqube MCP connection — issues (including security findings) and quality-gate condition failures (coverage, duplication, ratings) — fix what's fixable in the codebase, and validate with the repo's own lint/typecheck/test commands. Use when the user says things like "check sonar issues", "fix sonar issues", "clean up sonar", "why is the quality gate failing", or references a Sonar quality gate report with remaining findings. Does not commit or push.
+---
+
+# Sonar Cleanup
+
+Repeating workflow for addressing SonarCloud/SonarQube findings on whatever repo this is invoked in. Sonar surfaces problems through a couple of distinct APIs — issues (which now include security findings; hotspots were deprecated and consolidated into the issues model) and quality-gate conditions (coverage, duplication, ratings) — and a full cleanup has to check both; a project can have zero open issues and still be failing its quality gate.
+
+## Precondition — the sonarqube MCP connection
+
+This skill drives the **`sonarqube` MCP server**; every lookup below goes through its tools. Confirm
+it is reachable before doing anything else, because the failure mode otherwise is a half-finished run
+that silently skips the quality gate.
+
+Check whether the sonarqube MCP tools are reachable.
+{% if agent == "claude" %}If none are loaded in this session, run `ToolSearch` with
+`select:mcp__sonarqube__search_sonar_issues_in_projects` (or the keyword query `sonarqube issues`) —
+they are frequently deferred rather than absent.
+{% endif %}If they genuinely aren't configured, or the server reports it needs authentication,
+**stop and say so** rather than falling back to scraping a web UI or guessing at findings: the user
+needs to add the server to this harness's own MCP configuration and supply a token. Name that as the
+blocker and end the run.
+
+## 0. Identify the project
+
+Determine the Sonar project key (and organization, for SonarCloud) from the current repo — check, in order:
+- `.sonarlint/connectedMode.json` (`projectKey`, `sonarCloudOrganization`/`sonarQubeUri`, `region`)
+- `sonar-project.properties` (`sonar.projectKey`, `sonar.organization`)
+- CI config referencing `sonar-scanner` / `sonarcloud-github-action` (e.g. `.github/workflows/*.yml`)
+
+If none of these exist, ask the user for the project key/org rather than guessing.
+
+If the repo has an open PR that CI has analyzed, prefer `pullRequest` (discover the Sonar PR key via `list_pull_requests`) over `branch` for all lookups below, per the sonarqube MCP server's own instructions. Otherwise use `branch` (discover via `list_branches`), or omit both to get the default/main branch.
+
+## 1. Fetch all findings
+
+Use the `sonarqube` MCP tools.{% if agent == "claude" %} If a tool isn't loaded yet in this session, run `ToolSearch` with `select:mcp__sonarqube__<name>` or a keyword query to discover exact names.{% endif %} Pull from all of these — don't stop at issues:
+
+- **Issues** (`search_sonar_issues_in_projects`) — bugs, vulnerabilities, code smells, and security findings all live here now (hotspots were deprecated and merged into this model). Filter `issueStatuses: ["OPEN", "CONFIRMED"]` (skip `FIXED`/`FALSE_POSITIVE`/`ACCEPTED`). Use `impactSoftwareQualities: ["SECURITY"]` to isolate security-flavored findings when needed. Paginate via `pageIndex`/`pageSize` (max 500/page) until `paging.total` is exhausted. (An older SonarQube Server instance may still expose a legacy `search_security_hotspots` tool if `search_sonar_issues_in_projects` comes back oddly thin on security findings for that server — check for it if so, but don't call it by default.)
+- **Quality gate status** (`get_project_quality_gate_status`) — pass the project key (and branch/pullRequest). Walk every `conditions[]` entry with `status: "ERROR"`, not just the overall status. Common failing metrics and what they mean:
+  - `new_coverage` / `coverage` — insufficient test coverage on new or overall code.
+  - `new_duplicated_lines_density` / `duplicated_lines_density` — copy-pasted code.
+  - `new_reliability_rating`, `new_security_rating`, `new_maintainability_rating`, `new_security_hotspots_reviewed` — these are rollups of the issues already fetched above; don't double-count, but do surface which specific issues are dragging the rating down (`get_component_measures` can help attribute this).
+- **Dependency risks** (`search_dependency_risks`), if the project has any — vulnerable/outdated dependencies. Report only; don't bump dependency versions as part of this skill without the user explicitly asking (a version bump is a separate, judgment-heavy change with its own blast radius).
+
+Save the raw fetched data (issues pages, quality gate response, dependency risks) to `<repo-root>/.sonar-cleanup/findings-<YYYY-MM-DD>.json` as scratch space for the rest of the run. Make sure `.sonar-cleanup/` is gitignored in the repo (add it to `.gitignore` if missing) so these dumps never get committed.
+
+If every category above comes back clean (no issues, gate green), say so plainly and stop — don't invent work.
+
+## 2. Triage
+
+- **Issues**: group by `component` (file path), sort by severity, most severe first (`BLOCKER` > `CRITICAL` > `MAJOR` > `MINOR` > `INFO`, or `impacts[].severity` for clean-code-taxonomy fields). Resolve `component` to the real repo-relative path; use `line`/`textRange` for the exact location. Flag security-flavored issues (`impactSoftwareQualities` includes `SECURITY`, or legacy `type: VULNERABILITY`/`SECURITY_HOTSPOT`) for the extra caution described in step 3 — these are inherently more judgment-heavy than a plain code smell.
+- **Quality gate conditions**: for each failing condition, identify *what new/changed code* is responsible where possible (e.g. `get_file_coverage_details` / `search_files_by_coverage` to find which files are dragging coverage down) rather than treating the metric as an abstract number.
+- Check this repo's own conventions (CLAUDE.md/AGENTS.md, linter config, CI workflow) for anything that changes how strictly to treat a finding — e.g. a documented reason coverage tooling doesn't run locally, test code intentionally excluded from a rule, or a metric that's known to be structurally hard to move (a language/toolchain limitation, not neglect).
+
+## 3. Fix
+
+Apply fixes per category — these have very different risk profiles, don't treat them uniformly:
+
+- **Issues**: work file by file, most severe first. Use the `rule` id and `message` to apply the correct, minimal fix — don't refactor beyond what the rule requires, and follow the repo's existing patterns and style. If an issue looks like a false positive or needs a judgment call (suppressing a rule, accepting risk), don't silently fix it — flag it in the report instead of guessing.
+- **Security-flavored issues** (flagged in triage): read the actual code and the rule's full rationale (`show_rule`) before touching anything — don't pattern-match on the rule name. If the usage is genuinely safe as-is, flag it in the report as a recommended "won't fix"/accepted-risk call with reasoning — let the user make that status change via `change_sonar_issue_status`, don't call it yourself. If it's actually unsafe, fix the code.
+- **Coverage gate failures**: only add tests if you can identify the specific untested lines/branches from `get_file_coverage_details` and write a real, meaningful test — not a shallow test that just pads the number. If coverage can't be improved locally (e.g. this repo's coverage tooling is a documented no-op on the local platform — check CLAUDE.md/AGENTS.md/README first), say so and explain why, don't fake it.
+- **Duplication gate failures**: only extract a shared abstraction if it's a genuine, clean extraction the repo's patterns would support. Don't force a bad abstraction just to shrink a duplication percentage.
+- **Rating conditions** (`new_reliability_rating` etc.): these resolve automatically once the underlying issues are fixed — don't treat them as a separate task.
+- **Dependency risks**: report only, as noted in step 1. Never bump a dependency version as part of this skill.
+
+## 4. Validate
+
+Figure out this repo's own lint/typecheck/test commands (check CLAUDE.md/AGENTS.md, README, `package.json` scripts, `Makefile`, `pyproject.toml`, CI config, etc.) and run only the narrowest relevant ones for what actually changed — e.g. lint + format check + typecheck on the changed files, and tests scoped to the affected package/module, not a full-repo run unless that's the only option.
+
+## 5. Report
+
+Summarize, grouped by category:
+- **Issues**: fixed (rule id + one-line description each) vs. skipped and why. Call out security-flavored ones separately, with the recommended status change if any.
+- **Quality gate**: which conditions were failing, which were addressed (and how), which remain and why (e.g. "requires local coverage tooling this repo doesn't have" or "needs a human call on the abstraction").
+- **Dependency risks**: listed, not acted on.
+- **Validation results**: pass/fail, with output if anything failed.
+
+Do not commit, push, or stage changes — leave them in the working tree for the user to review, unless they've explicitly asked for that in this conversation. Do not change any issue's status (including security accept-risk calls) or bump any dependency yourself — those are always left for the user to action explicitly.

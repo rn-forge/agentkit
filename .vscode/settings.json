@@ -1,0 +1,6 @@
+{
+    "sonarlint.connectedMode.project": {
+        "connectionId": "rn-forge",
+        "projectKey": "rn-forge_agentkit"
+    }
+}

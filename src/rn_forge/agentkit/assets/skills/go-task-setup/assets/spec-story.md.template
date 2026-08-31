@@ -1,0 +1,63 @@
+<!--
+Template for the task-vocabulary story emitted in spec mode (SKILL.md §1).
+
+ADAPT THIS TO THE TARGET SPEC TREE — do not paste it verbatim. Read two or three
+existing stories first and match their id scheme, front-matter table, heading
+levels and section names. A story in a foreign format is worse than no story.
+
+The value here is entirely in the acceptance criteria: each one is a command a
+model can run and fail. Prose describing the convention gets skimmed; a failing
+check does not. If you soften a criterion into "should be well organised", you
+have removed the only thing that makes this story work as a handoff.
+
+Placeholders:
+  __STORY_ID__          the tree's own id scheme, e.g. IB-I1-P1-S2
+  __STORY_NUMBER__      e.g. S-1.2
+  __DEPENDS_ON__        the "repo exists / toolchain pinned" story id
+  __ARCH_ANCHOR__       link to the architecture section written in §1 step 2
+  __NAMESPACES__        one per workspace, e.g. `tasks/backend.yml`, `tasks/frontend.yml`
+  __RAW_TOOLS__         the tools CI must never call directly, e.g. uv, pnpm, npx, pytest, ruff, mypy
+  __VERB_SET__          the top-level verbs, adapted per §2 (Java: no typecheck; Go: no install)
+  __LINT_DIR__          where tooling scripts live, e.g. tools/lint/
+  __SETUP_SIDE_EFFECTS__ what `task setup` must leave behind, e.g. runtime dirs, a healthy container
+-->
+
+### __STORY_NUMBER__ — `Taskfile.yml` as the only entrypoint
+
+| | |
+|---|---|
+| **Id** | `__STORY_ID__` |
+| **Estimate** | 0.5 |
+| **Depends on** | `__DEPENDS_ON__` |
+| **Implements** | [`__ARCH_ANCHOR__`](__ARCH_ANCHOR__) |
+
+**As a** developer or CI job **I want** one command vocabulary for every operation **so that** a pipeline and a laptop never drift into running different things under the same name.
+
+#### Scope
+
+- `Taskfile.yml` including __NAMESPACES__. The root file holds wrappers only — every task in it is a list of calls into an include; anything invoking __RAW_TOOLS__, docker or the filesystem lives in the namespace file that owns it.
+- Top-level __VERB_SET__.
+- `task setup` installing every workspace and __SETUP_SIDE_EFFECTS__.
+- A lint asserting the root file contains no raw shell command, and that every task carries a non-empty `desc`.
+- A lint asserting no CI definition invokes a tool directly.
+
+#### Acceptance criteria
+
+1. `task --list` exits 0 and prints every task named in Scope, each with a non-empty `desc`; `task no-such-task` exits non-zero.
+2. `__LINT_DIR__check_task_layout` exits 1 when a task in the root `Taskfile.yml` has a `cmds:` entry that is not a `task:` call, and exits 1 when any task in the root file or in `tasks/*.yml` has an empty or missing `desc`.
+3. `__LINT_DIR__check_ci_entrypoint` exits 1 when any CI definition has a run step invoking __RAW_TOOLS__ rather than `task`.
+4. `task validate` is the aggregate of the checks named in Scope and fails if any one fails.
+5. `task setup` on a clean clone exits 0 and __SETUP_SIDE_EFFECTS__.
+6. Both lints are reachable from `task lint`, so the rules hold without anyone invoking them by hand.
+
+#### Out of scope
+
+- Namespace bodies belonging to later phases — placeholders only; the phase that owns each capability fills its own tasks.
+
+#### Tasks
+
+- [ ] `Taskfile.yml` + the `tasks/*.yml` includes
+- [ ] `task setup` and its side effects
+- [ ] `__LINT_DIR__check_task_layout` and `__LINT_DIR__check_ci_entrypoint`, both wired into `task lint`
+- [ ] A rule in `CLAUDE.md` stating the task vocabulary is the only entrypoint, linked to the design doc
+- [ ] If a `go-task-setup` skill is available, invoke it to implement this story; otherwise satisfy the acceptance criteria directly

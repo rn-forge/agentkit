@@ -1,0 +1,103 @@
+#!/usr/bin/env node
+/**
+ * Fail if a CI definition invokes a tool directly instead of `task`.
+ *
+ * Node variant of check_ci_entrypoint.py.template — use this one in a repo
+ * whose tooling scripts are already JS/TS. Needs no YAML parser: it scans step
+ * command lines textually, which is what makes it work across providers.
+ *
+ * Handles both GitHub Actions (`run:`) and Azure Pipelines (`bash:`, `script:`,
+ * `pwsh:`, `powershell:`) step syntax, including multi-line block scalars.
+ *
+ * Usage: node check_ci_entrypoint.mjs [repo-root]   (default: current directory)
+ */
+
+import { readdirSync, readFileSync, existsSync, statSync } from "node:fs";
+import { join, relative, resolve } from "node:path";
+
+// Relative to the repo root. Keep only the providers this repo actually uses.
+const CI_DIRS = [__CI_DIRS__];
+
+// The real tools the task vocabulary wraps — nobody, human or CI, should
+// invoke these directly. Extend this list as new tools get wrapped.
+const FORBIDDEN_TOOLS = [__FORBIDDEN_TOOLS__];
+
+const STEP_KEYS = ["run", "bash", "script", "pwsh", "powershell"];
+
+// A step's command line — single-line `key: cmd` or the first line of a
+// `key: |` block scalar. Matches the tool as the first token, or after a shell
+// separator (&&, ||, ;, |), so `task setup && uv sync` is still caught even
+// though `task` legitimately appears in the same line. The optional `./` is
+// what catches wrapper scripts invoked by path — `./gradlew test`, `./mvnw`.
+const STEP_LINE = new RegExp(`^(\\s*)(?:- )?(?:${STEP_KEYS.join("|")}):\\s*(.*)$`);
+const BLOCK_SCALAR = /^[|>][+-]?\d*$/;
+const TOOL_INVOCATION = new RegExp(
+  `(?:^|&&|\\|\\||;|\\|)\\s*(?:\\./)?(${FORBIDDEN_TOOLS.join("|")})\\b`,
+  "g",
+);
+
+function checkCommandLine(label, lineno, command) {
+  return [...command.matchAll(TOOL_INVOCATION)].map(
+    (m) => `${label}:${lineno}: step invokes \`${m[1]}\` directly — use \`task\` instead`,
+  );
+}
+
+function checkFile(path, label) {
+  const errors = [];
+  const lines = readFileSync(path, "utf8").split("\n");
+  let i = 0;
+
+  while (i < lines.length) {
+    const match = STEP_LINE.exec(lines[i]);
+    if (!match) {
+      i += 1;
+      continue;
+    }
+    const [, indent, remainder] = match;
+    if (remainder && !BLOCK_SCALAR.test(remainder.trim())) {
+      errors.push(...checkCommandLine(label, i + 1, remainder));
+      i += 1;
+      continue;
+    }
+    // Block scalar: consume subsequent, more-indented lines as the body.
+    const baseIndent = indent.length;
+    i += 1;
+    while (i < lines.length) {
+      const line = lines[i];
+      if (line.trim() && line.length - line.trimStart().length <= baseIndent) break;
+      errors.push(...checkCommandLine(label, i + 1, line));
+      i += 1;
+    }
+  }
+
+  return errors;
+}
+
+function walk(dir) {
+  return readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
+    const path = join(dir, entry.name);
+    if (entry.isDirectory()) return walk(path);
+    return /\.ya?ml$/.test(entry.name) ? [path] : [];
+  });
+}
+
+function main() {
+  const root = resolve(process.argv[2] ?? ".");
+  const errors = [];
+
+  for (const ciDir of CI_DIRS.map((d) => join(root, d))) {
+    if (!existsSync(ciDir) || !statSync(ciDir).isDirectory()) continue;
+    for (const path of walk(ciDir).sort()) {
+      errors.push(...checkFile(path, relative(root, path)));
+    }
+  }
+
+  if (errors.length) {
+    errors.forEach((error) => console.log(error));
+    return 1;
+  }
+
+  return 0;
+}
+
+process.exit(main());
