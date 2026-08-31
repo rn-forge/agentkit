@@ -25,7 +25,7 @@ def test_codex_render_and_parse(tmp_path) -> None:
 def test_codex_artifacts_and_scope_defaults() -> None:
     adapter = CodexAdapter()
     global_keys = [artifact.key for artifact in adapter.artifacts("global")]
-    assert global_keys[:7] == [
+    assert global_keys[:9] == [
         "config",
         "AGENTS.md",
         "hooks.json",
@@ -33,8 +33,10 @@ def test_codex_artifacts_and_scope_defaults() -> None:
         "hooks/pre-bash-guard.sh",
         "hooks/user-prompt-secret-guard.sh",
         "hooks/pre-write-protect.sh",
+        "hooks/post-write-unwrap-md.sh",
+        "hooks/unwrap_md.py",
     ]
-    assert all(key.startswith("skills/") for key in global_keys[7:])
+    assert all(key.startswith("skills/") for key in global_keys[9:])
     assert "skills/sonar-cleanup/SKILL.md" in global_keys
     assert [artifact.key for artifact in adapter.artifacts("local")] == [
         "config",

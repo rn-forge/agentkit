@@ -43,11 +43,11 @@ app = typer.Typer(
 _GITIGNORE_START = "# BEGIN rn-forge agentkit"
 _GITIGNORE_END = "# END rn-forge agentkit"
 _GITIGNORE_ENTRIES = (
-    "/.rn-forge/agentkit/*/rendered/",
-    "/.rn-forge/agentkit/*/hooks/",
-    "/.rn-forge/agentkit/_common/",
-    "/.rn-forge/agentkit/state.json",
-    "/.rn-forge/agentkit/backups/",
+    ".rn-forge/agentkit/*/rendered/",
+    ".rn-forge/agentkit/*/hooks/",
+    ".rn-forge/agentkit/_common/",
+    ".rn-forge/agentkit/state.json",
+    ".rn-forge/agentkit/backups/",
 )
 
 

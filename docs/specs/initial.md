@@ -6,8 +6,21 @@ scaffolding spec, refinement plan 01, and the packaged-asset review. It replaces
 `agentkit_spec.md`, `agentkit_refinement_plan.md`, and
 `agentkit_asset_review_plan.md`.
 
-User-facing usage lives in [README.md](../../README.md). Remaining open items are
-in §13 — none are blocking.
+User-facing usage lives in the repository's `README.md`; the current-state
+architecture and guides live in the docs site alongside this page. This document
+is the *historical* record and stays append-only. Remaining open items are in
+§13 — none are blocking.
+
+**2026-08-29 — phase 4, documentation system.** Added a go-task command
+vocabulary (root `Taskfile.yml` wrappers over `tasks/*.yml` namespaces, with
+`scripts/check_task_layout.py` and `scripts/check_ci_entrypoint.py` enforcing
+the split) and an MkDocs site (`mkdocs.yml`, `docs/architecture/`,
+`docs/guides/`, `docs/runbooks/`, mkdocstrings reference, `strict: true`, plus
+`scripts/check-docs.py` in `task lint`). README slimmed from 253 to ~93 lines,
+with the configuration model, asset pack, what-to-commit, source layout, and
+adapter contract migrated into the site. Rationale in
+[architecture/docs-system.md](../architecture/docs-system.md) and
+[guides/task-vocabulary.md](../guides/task-vocabulary.md).
 
 ---
 
@@ -195,8 +208,8 @@ skips it so an edited seed is never reported as drift.
 
 | Agent  | Native agent files                                                                                            | Shared executable hooks                                                                                                   |
 | ------ | ------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------- |
-| Claude | `~/.claude/settings.json`, `~/.claude/CLAUDE.md`, `~/.claude/output-styles/concise.md`, `~/.claude/skills/**` | `claude/hooks/`: `pre-bash-guard.sh`, `user-prompt-secret-guard.sh`, `pre-write-protect.sh`, `session-compact-context.sh` |
-| Codex  | `~/.codex/config.toml`, `~/.codex/AGENTS.md`, `~/.codex/hooks.json`                                           | `codex/hooks/`: `pre-bash-guard.sh`, `user-prompt-secret-guard.sh`, `pre-write-protect.sh`                                |
+| Claude | `~/.claude/settings.json`, `~/.claude/CLAUDE.md`, `~/.claude/output-styles/concise.md`, `~/.claude/skills/**` | `claude/hooks/`: `pre-bash-guard.sh`, `user-prompt-secret-guard.sh`, `pre-write-protect.sh`, `session-compact-context.sh`, `post-write-unwrap-md.sh` |
+| Codex  | `~/.codex/config.toml`, `~/.codex/AGENTS.md`, `~/.codex/hooks.json`                                           | `codex/hooks/`: `pre-bash-guard.sh`, `user-prompt-secret-guard.sh`, `pre-write-protect.sh`, `post-write-unwrap-md.sh`                                |
 
 Every file under the packaged `agents/claude/assets/skills/` tree is declared
 as its own global artifact and copied verbatim to the matching path under
@@ -216,6 +229,17 @@ SQL), branch protection (force pushes and pushes to protected branches;
 `AGENTKIT_PROTECTED_BRANCHES` overrides the `main|master` default, with
 `CLAUDE_PROTECTED_BRANCHES` honored as a fallback), sensitive-path write
 protection, and prompt-secret scanning.
+
+`post-write-unwrap-md.sh` is not a guard — it's a formatting convenience that
+always exits 0. It fires on `PostToolUse` for `Write`/`Edit`/`MultiEdit`
+(Codex: `Edit|Write`) against `.md` files and unwraps prose to one line per
+paragraph/list item via the co-installed `unwrap_md.py`, so hand-authored docs
+stay diff-friendly regardless of which agent wrote them. A repo opts out with
+a `.nounwrap` marker at its git root, checked once per invocation rather than
+walked per-directory. `unwrap_md.py` refuses to write — and reports to
+stderr instead — when the source has a hard line break, or when the
+whitespace-normalized document would change; PostToolUse can't undo an edit
+anyway, so there is nothing blocking to do beyond that.
 
 Prompt-secret scanning runs gitleaks **in addition to** the built-in regex set,
 never instead of it, and blocks if either fires. This matters: gitleaks' default
@@ -287,7 +311,11 @@ Adapters may mount their own sub-commands via `cli_extension`.
 
 `agentkit diff --write` parses the native config, computes the structural delta
 against the rendered config, and merges it into the managed `config.toml` at
-that scope. This turns runtime accumulations — permission grants, `/config`
+that scope. The baseline is re-rendered from the resolved layers in memory
+rather than read from `rendered/`: that staging copy is gitignored, so a fresh
+clone has none, and a stale one would capture drift the user never made. A
+scope with no native config yet reports that there is nothing to capture
+instead of failing. This turns runtime accumulations — permission grants, `/config`
 changes — into durable source instead of drift waiting to be clobbered.
 
 Scope and limits: only the **primary config artifact** is captured
@@ -295,6 +323,15 @@ structurally. Append-merged lists capture only a suffix added to the rendered
 value. Key removals and destructive edits to append-merged lists cannot be
 represented by the layered merge model and are rejected rather than silently
 dropped.
+
+The same `--write` flag also captures every other artifact backed by a
+packaged static source — hook scripts and skill files — via `capture_assets`:
+a hand-edited native file is copied verbatim onto its packaged source path in
+this checkout when the two differ, so the fix is versioned instead of lost on
+the next `apply`. This is a plain file copy, not a structural merge, and only
+does something useful when running from an editable checkout of this repo; an
+unwritable packaged source (an installed, non-editable package) is reported
+per-artifact instead of raising.
 
 ## 9b. Repository shareability
 
@@ -333,8 +370,7 @@ conflicts between developers on different agentkit versions.
 `install.sh` builds a versioned environment under
 `$RNF_HOME/agentkit/v<version>/`, updates the `current` symlink, and links the
 CLI at `$RNF_HOME/bin/agentkit`. It installs **from a checkout only** (no
-release-tarball streaming yet), so this repo and the sibling `../pykit` path
-dependency must remain available during install. It does not edit shell rc
+release-tarball streaming yet), so this repo path must remain available during install. It does not edit shell rc
 files.
 
 ## 11. Testing and typing
@@ -475,10 +511,8 @@ Collected here so nothing pending is left scattered in earlier sections.
   checked-out agentkit repo (packaged `defaults/` + `assets/`) so captures can
   be committed and released as a new default-pack version — the Brewfile loop.
   Phase 1 is the enabler; this is the remaining half.
-- **Release install path.** `install.sh` requires a checkout plus the sibling
-  `../pykit` path dependency; no tarball or curl streaming.
-- **mkdocs site.** Docstrings are already written mkdocstrings-compatible; no
-  mkdocs config exists yet, deliberately.
+- **Release install path.** `install.sh` still requires a checkout of this
+  repo; no tarball or curl streaming.
 - **Default-value curation.** Kiln config _values_ (models, policies) were
   ported verbatim and have never been reviewed on their merits. Phase 3 curated
   the asset pack's structure and safety, not every value.
@@ -487,6 +521,6 @@ Collected here so nothing pending is left scattered in earlier sections.
   second agent grows an equivalent event.
 - **Codex secret-read protection.** Blocked upstream — Codex exposes no
   read-tool matcher (§7, accepted exclusions). Revisit if one ships.
-- **`docs/openclaw-tailscale-setup.md` is untracked and unrelated to agentkit**
-  (Tailscale/OpenClaw setup notes). Not part of this tool's scope — confirm
-  whether it belongs in this repo at all, or should be removed/relocated.
+- **Pages deploy is unverified.** This repo has no GitHub remote yet, so
+  `.github/workflows/docs.yml` has never run. Pages must also be enabled
+  manually (Source: GitHub Actions).

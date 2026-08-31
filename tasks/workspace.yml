@@ -1,0 +1,24 @@
+version: "3"
+
+tasks:
+  install:
+    desc: Sync the virtualenv with the dev and docs dependency groups.
+    internal: true
+    cmds:
+      - uv sync --group dev --group docs
+
+  build:
+    desc: Build the wheel and sdist into dist/.
+    internal: true
+    env:
+      # Packaging must not reuse the in-repo cache — uv build resolves against
+      # a clean tree and a shared cache has historically leaked stale metadata.
+      UV_CACHE_DIR: /tmp/agentkit-uv-cache
+    cmds:
+      - uv build
+
+  clean:
+    desc: Remove build outputs, tool caches, and the rendered docs site.
+    cmds:
+      - rm -rf dist build .docs-site .pytest_cache .ruff_cache
+      - find . -type d -name __pycache__ -not -path './.venv/*' -exec rm -rf {} +

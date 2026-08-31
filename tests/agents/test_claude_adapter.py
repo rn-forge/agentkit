@@ -22,7 +22,7 @@ def test_claude_render_and_parse(tmp_path) -> None:
 def test_claude_artifacts_and_scope_defaults() -> None:
     adapter = ClaudeAdapter()
     global_keys = [artifact.key for artifact in adapter.artifacts("global")]
-    assert global_keys[:8] == [
+    assert global_keys[:10] == [
         "config",
         "CLAUDE.md",
         "output-styles/concise.md",
@@ -31,8 +31,10 @@ def test_claude_artifacts_and_scope_defaults() -> None:
         "hooks/user-prompt-secret-guard.sh",
         "hooks/pre-write-protect.sh",
         "hooks/session-compact-context.sh",
+        "hooks/post-write-unwrap-md.sh",
+        "hooks/unwrap_md.py",
     ]
-    skill_keys = global_keys[8:]
+    skill_keys = global_keys[10:]
     assert skill_keys and all(key.startswith("skills/") for key in skill_keys)
     assert "skills/go-task-setup/SKILL.md" in skill_keys
     assert "skills/mkdocs-site-setup/SKILL.md" in skill_keys

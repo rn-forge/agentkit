@@ -18,9 +18,12 @@ wheels/
 .ruff_cache
 
 # BEGIN rn-forge agentkit
-/.rn-forge/agentkit/*/rendered/
-/.rn-forge/agentkit/*/hooks/
-/.rn-forge/agentkit/_common/
-/.rn-forge/agentkit/state.json
-/.rn-forge/agentkit/backups/
+.rn-forge/agentkit/*/rendered/
+.rn-forge/agentkit/*/hooks/
+.rn-forge/agentkit/_common/
+.rn-forge/agentkit/state.json
+.rn-forge/agentkit/backups/
 # END rn-forge agentkit
+
+# docs site build output
+.docs-site

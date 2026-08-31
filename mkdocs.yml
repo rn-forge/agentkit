@@ -1,0 +1,42 @@
+site_name: agentkit
+site_description: Architecture, guides, and Python API reference for rn-forge agentkit.
+docs_dir: docs
+strict: true
+theme:
+  name: material
+  features:
+    - navigation.sections
+    - navigation.top
+    - content.code.copy
+nav:
+  - Home: index.md
+  - Architecture:
+      - Overview: architecture/index.md
+      - Adapters and artifacts: architecture/adapters.md
+      - Documentation system: architecture/docs-system.md
+  - Guides:
+      - Development: guides/development.md
+      - Task vocabulary: guides/task-vocabulary.md
+      - Configuring a repository: guides/configuration.md
+  - Reference:
+      - Python API: reference/python-api.md
+  - Runbooks:
+      - OpenClaw + Tailscale: runbooks/openclaw-tailscale.md
+  - Specs:
+      - Initial build: specs/initial.md
+plugins:
+  - search
+  - mkdocstrings:
+      handlers:
+        python:
+          paths: [src]
+          options:
+            docstring_style: google
+            show_source: true
+            show_root_heading: true
+markdown_extensions:
+  - admonition
+  - attr_list
+  - pymdownx.highlight:
+      anchor_linenums: true
+  - pymdownx.superfences

@@ -9,7 +9,6 @@ dependencies = [
     "jinja2>=3.1.6",
     "pydantic>=2.13.4",
     "rich>=15.0.0",
-    "rn-forge-commons[all]",
     "ruamel-yaml>=0.19.1",
     "tomlkit>=0.15.0",
     "typer>=0.26.8",
@@ -44,13 +43,15 @@ extend-exclude = ["**/assets/skills/**"]
 [tool.uv.build-backend]
 module-name = "rn_forge.agentkit"
 
-[tool.uv.sources]
-rn-forge-commons = { path = "../pykit/packages/rn-forge-commons" }
-
 [dependency-groups]
 dev = [
     "pyright>=1.1.411",
     "pytest>=9.1.1",
     "pytest-cov>=7.1.0",
     "ruff>=0.15.21",
+]
+docs = [
+    "mkdocs-material>=9.6",
+    "mkdocstrings[python]>=0.30",
+    "pyyaml>=6.0",
 ]

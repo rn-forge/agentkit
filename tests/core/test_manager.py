@@ -1,10 +1,15 @@
 import json
+import shutil
+from pathlib import Path
+
 from rn_forge.agentkit.agents.claude import ClaudeAdapter
 from rn_forge.agentkit.agents.codex import CodexAdapter
+from rn_forge.agentkit.core.artifacts import Artifact
 from rn_forge.agentkit.core.io import read_config, write_config
 from rn_forge.agentkit.core.manager import (
     apply_adapter,
     capture_adapter,
+    capture_assets,
     init_adapter,
     managed_config_path,
     reset_adapter,
@@ -102,7 +107,7 @@ def test_capture_updates_managed_source_and_preserves_comments(isolated_env) -> 
     result = capture_adapter(adapter, "global", repo)
 
     assert result.changed is True
-    assert '# keep' in source.read_text()
+    assert "# keep" in source.read_text()
     assert read_config(source)["personality"] == "friendly"
     assert read_config(source)["model"] == "gpt-5"
 
@@ -125,6 +130,65 @@ def test_capture_records_only_new_append_list_values(isolated_env) -> None:
     ]
     merged, _ = resolve_config(adapter, "global", repo)
     assert merged.config["permissions"]["allow"] == native["permissions"]["allow"]
+
+
+def test_capture_assets_writes_hand_edited_native_back_to_packaged_source(
+    isolated_env, tmp_path
+) -> None:
+    _, _, repo = isolated_env
+    adapter = CodexAdapter()
+    source = tmp_path / "packaged-hook.sh"
+    source.write_text("#!/usr/bin/env bash\necho packaged\n")
+    artifact = Artifact(
+        key="hooks/test-hook.sh",
+        native_relative=Path("codex/hooks/test-hook.sh"),
+        root="share",
+        source=source,
+        executable=True,
+    )
+    adapter.artifacts = lambda scope: [artifact]  # type: ignore[method-assign]
+
+    native = adapter.native_path("global", repo, artifact)
+    native.parent.mkdir(parents=True)
+    native.write_text("#!/usr/bin/env bash\necho hand-edited\n")
+
+    results = capture_assets(adapter, "global", repo)
+
+    assert len(results) == 1
+    assert results[0].changed is True
+    assert source.read_text() == "#!/usr/bin/env bash\necho hand-edited\n"
+    assert capture_assets(adapter, "global", repo) == []
+
+
+def test_capture_assets_reports_unwritable_source_without_raising(
+    isolated_env, tmp_path
+) -> None:
+    _, _, repo = isolated_env
+    adapter = CodexAdapter()
+    missing_dir = tmp_path / "no-such-dir"
+    source = missing_dir / "packaged-hook.sh"
+    artifact = Artifact(
+        key="hooks/test-hook.sh",
+        native_relative=Path("codex/hooks/test-hook.sh"),
+        root="share",
+        source=source,
+        executable=True,
+    )
+    adapter.artifacts = lambda scope: [artifact]  # type: ignore[method-assign]
+
+    native = adapter.native_path("global", repo, artifact)
+    native.parent.mkdir(parents=True)
+    native.write_text("#!/usr/bin/env bash\necho hand-edited\n")
+    missing_dir.mkdir()
+    missing_dir.chmod(0o500)
+    try:
+        results = capture_assets(adapter, "global", repo)
+    finally:
+        missing_dir.chmod(0o700)
+
+    assert len(results) == 1
+    assert results[0].changed is False
+    assert "unwritable" in results[0].message
 
 
 def test_seed_only_artifact_is_written_once_then_left_alone(isolated_env) -> None:
@@ -157,3 +221,46 @@ def test_seed_only_claude_md_is_scaffolded_for_the_repo(isolated_env) -> None:
 
 def _result_for(results, key: str):
     return next(result for result in results if result.artifact == key)
+
+
+def test_capture_works_without_the_rendered_staging_copy(isolated_env) -> None:
+    """rendered/ is gitignored, so capture must not depend on it existing."""
+    _, _, repo = isolated_env
+    adapter = CodexAdapter()
+    source = global_root() / "codex" / "config.toml"
+    write_config(source, {"personality": "pragmatic"})
+    applied = apply_adapter(adapter, "global", repo)[0]
+    applied.native_path.write_text(
+        'model = "gpt-5"\n' + applied.native_path.read_text()
+    )
+    shutil.rmtree(applied.rendered_path.parent)
+
+    result = capture_adapter(adapter, "global", repo)
+
+    assert result.changed is True
+    assert read_config(source)["model"] == "gpt-5"
+
+
+def test_capture_ignores_a_stale_rendered_staging_copy(isolated_env) -> None:
+    _, _, repo = isolated_env
+    adapter = CodexAdapter()
+    source = global_root() / "codex" / "config.toml"
+    write_config(source, {"model": "gpt-5"})
+    applied = apply_adapter(adapter, "global", repo)[0]
+    applied.rendered_path.write_text('model = "stale"\n')
+
+    result = capture_adapter(adapter, "global", repo)
+
+    assert result.changed is False
+    assert result.message == "unchanged"
+    assert read_config(source)["model"] == "gpt-5"
+
+
+def test_capture_reports_a_missing_native_config_without_failing(isolated_env) -> None:
+    _, _, repo = isolated_env
+    adapter = CodexAdapter()
+
+    result = capture_adapter(adapter, "global", repo)
+
+    assert result.changed is False
+    assert result.message == "no native config"

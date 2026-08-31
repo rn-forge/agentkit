@@ -4,10 +4,21 @@ Model context for working in this repository. User-facing usage and the full
 design record live elsewhere — this file only adds what an agent needs that
 isn't already there, plus pointers instead of duplication:
 
-- [README.md](README.md) — install, CLI usage, configuration model, default
-  asset pack, source layout, what to commit.
-- [docs/specs/initial.md](docs/specs/initial.md) — design decisions, the
-  artifact/adapter model, full build history, and §13 for what's pending.
+- [README.md](README.md) — what agentkit is, install, quickstart, and the
+  index into the docs site.
+- [docs/](docs/) — the MkDocs site. Start at
+  [architecture/index.md](docs/architecture/index.md) for the configuration and
+  path models, [architecture/adapters.md](docs/architecture/adapters.md) for the
+  adapter contract, [guides/configuration.md](docs/guides/configuration.md) for
+  the asset pack and what to commit, and
+  [guides/development.md](docs/guides/development.md) for conventions and
+  source layout.
+- [docs/specs/initial.md](docs/specs/initial.md) — the historical design record:
+  decisions, full build history, and §13 for what's pending.
+- [docs/architecture/docs-system.md](docs/architecture/docs-system.md) — how and
+  why the docs site is built; update it when the docs tooling changes.
+- [docs/guides/task-vocabulary.md](docs/guides/task-vocabulary.md) — the task
+  vocabulary and its rules; update it when the verb set changes.
 
 ## What this repo is
 
@@ -15,9 +26,10 @@ isn't already there, plus pointers instead of duplication:
 configuration for AI coding agents (Claude Code, Codex, …) from one layered
 source of truth, and this repo dogfoods itself: its own `.claude/`, `.codex/`,
 and `.rn-forge/agentkit/` were produced by running `agentkit project init` /
-`global apply` against this repo. See README's "What to commit" section
-before hand-editing anything under those paths — most of it is generated and
-regenerable with `agentkit project update`.
+`global apply` against this repo. See
+[guides/configuration.md](docs/guides/configuration.md) before hand-editing
+anything under those paths — most of it is generated and regenerable with
+`agentkit project update`.
 
 ## Safety when working here
 
@@ -38,15 +50,22 @@ the `isolated_env` fixture in `tests/conftest.py` sets both `HOME` and
 - `pyright src` runs in strict mode at zero errors — fix typing at the
   untyped-library boundary rather than adding `# type: ignore` or downgrading
   rules (see `docs/specs/initial.md` §11).
-- `rn-forge-commons` is a local path dependency on the sibling `../pykit`
-  checkout (`tool.uv.sources` in `pyproject.toml`) — it must remain available
-  alongside this repo, and installs go through `uv sync`, not `uv pip install`.
 - `tests/` mirrors `src/`; add new tests under the matching subtree.
-- No Taskfile/go-task in this repo — use the `uv run` commands in README's
-  Development section directly.
+- **`task` is the only entrypoint** — never invoke `uv`, `pytest`, `ruff`,
+  `pyright` or `mkdocs` directly, in a CI step or in a command you hand the
+  user. `scripts/check_ci_entrypoint.py` enforces this for CI definitions.
+  New tasks go in the `tasks/*.yml` namespace file that owns the tool they
+  call; the root `Taskfile.yml` holds wrappers only (a list of `task:` calls,
+  never raw shell); every task carries a non-empty `desc:`.
+  `scripts/check_task_layout.py` enforces those two rules. See
+  [docs/guides/task-vocabulary.md](docs/guides/task-vocabulary.md).
+- Docs prose lives in `docs/` and is linked, never duplicated, from README.
+  `mkdocs.yml`'s `nav` is the source of page structure — a new page that isn't
+  in `nav` fails `task lint` as an orphan.
 
 ## Before reporting work done
 
-Run the narrowest relevant slice of the commands in README's Development
-section (`pytest`, `ruff check`, `pyright`) — use the exact invocations
-there, including the `UV_CACHE_DIR` overrides.
+Run the narrowest relevant slice of the task vocabulary — `task test`,
+`task lint`, `task typecheck`, or `task validate` for all three. The
+`UV_CACHE_DIR` handling that used to have to be remembered by hand is now in
+`Taskfile.yml`; don't reintroduce raw `uv run` invocations to work around it.

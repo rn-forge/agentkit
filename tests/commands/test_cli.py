@@ -1,9 +1,11 @@
 import json
+import shutil
 from pathlib import Path
 
 import tomlkit
 from typer.testing import CliRunner
 
+from rn_forge.agentkit.agents.codex.adapter import CodexAdapter
 from rn_forge.agentkit.cli import app
 
 runner = CliRunner()
@@ -73,7 +75,7 @@ def test_project_init_scaffolds_gitignore_once(isolated_env) -> None:
     content = gitignore.read_text(encoding="utf-8")
     assert content.startswith("*.log\n")
     assert content.count("# BEGIN rn-forge agentkit") == 1
-    assert content.count("/.rn-forge/agentkit/backups/") == 1
+    assert content.count(".rn-forge/agentkit/backups/") == 1
 
 
 def test_project_init_refreshes_stale_gitignore_block(isolated_env) -> None:
@@ -95,8 +97,8 @@ def test_project_init_refreshes_stale_gitignore_block(isolated_env) -> None:
     assert result.exit_code == 0, result.output
     content = gitignore.read_text(encoding="utf-8")
     assert "/.rn-forge/agentkit/hooks/\n" not in content
-    assert "/.rn-forge/agentkit/*/hooks/" in content
-    assert "/.rn-forge/agentkit/_common/" in content
+    assert ".rn-forge/agentkit/*/hooks/" in content
+    assert ".rn-forge/agentkit/_common/" in content
     assert content.count("# BEGIN rn-forge agentkit") == 1
     assert content.startswith("node_modules/\n")
     assert content.endswith("*.log\n")
@@ -142,6 +144,39 @@ def test_diff_check_uses_exit_code_two(isolated_env) -> None:
     assert result.exit_code == 2
 
 
+def test_doctor_hides_passing_checks_until_all_is_passed(isolated_env) -> None:
+    _, _, repo = isolated_env
+    runner.invoke(app, ["global", "apply", "--agent", "codex"])
+
+    default = runner.invoke(app, ["doctor", "--scope", "global", "--agent", "codex"])
+    verbose = runner.invoke(
+        app, ["doctor", "--scope", "global", "--agent", "codex", "--all"]
+    )
+
+    assert "configuration is valid" not in default.stdout
+    assert "--all to show" in default.stdout
+    assert "configuration is valid" in verbose.stdout
+
+
+def test_doctor_json_reports_every_check_with_a_category(isolated_env) -> None:
+    _, _, repo = isolated_env
+    result = runner.invoke(
+        app, ["--json", "doctor", "--scope", "local", "--repo", str(repo)]
+    )
+    payload = json.loads(result.stdout)
+
+    assert any(item["status"] == "ok" for item in payload)
+    assert {item["category"] for item in payload} <= {
+        "config",
+        "artifacts",
+        "environment",
+        "state",
+    }
+    dependencies = [item for item in payload if item["check"] == "dependency"]
+    assert len(dependencies) == 2
+    assert all(item["agent"] is None for item in dependencies)
+
+
 def test_diff_write_captures_native_config(isolated_env) -> None:
     _, _, repo = isolated_env
     initialized = runner.invoke(
@@ -174,6 +209,148 @@ def test_diff_write_captures_native_config(isolated_env) -> None:
     assert record["artifacts"][0]["drift"] is False
     managed = repo / ".rn-forge" / "agentkit" / "codex" / "config.toml"
     assert tomlkit.loads(managed.read_text())["model"] == "gpt-5"
+
+
+def test_diff_write_captures_after_the_rendered_copy_is_removed(isolated_env) -> None:
+    """A fresh clone has no gitignored rendered/ tree; --write must still work."""
+    _, _, repo = isolated_env
+    initialized = runner.invoke(
+        app, ["project", "init", "--agent", "codex", "--repo", str(repo)]
+    )
+    assert initialized.exit_code == 0, initialized.output
+    native = repo / ".codex" / "config.toml"
+    document = tomlkit.loads(native.read_text())
+    document["model"] = "gpt-5"
+    native.write_text(tomlkit.dumps(document))
+    shutil.rmtree(repo / ".rn-forge" / "agentkit" / "codex" / "rendered")
+
+    result = runner.invoke(
+        app,
+        [
+            "diff",
+            "--write",
+            "--scope",
+            "local",
+            "--agent",
+            "codex",
+            "--repo",
+            str(repo),
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    record = json.loads(result.stdout)[0]
+    assert record["capture"]["changed"] is True
+    managed = repo / ".rn-forge" / "agentkit" / "codex" / "config.toml"
+    assert tomlkit.loads(managed.read_text())["model"] == "gpt-5"
+
+
+def test_diff_write_reports_nothing_to_capture_without_a_native_config(
+    isolated_env,
+) -> None:
+    _, _, repo = isolated_env
+    result = runner.invoke(
+        app,
+        [
+            "diff",
+            "--write",
+            "--scope",
+            "local",
+            "--agent",
+            "codex",
+            "--repo",
+            str(repo),
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert "Nothing to capture: no native config." in result.output
+
+
+def test_diff_hides_the_defaults_layer_until_all_is_passed(isolated_env) -> None:
+    _, _, repo = isolated_env
+    initialized = runner.invoke(
+        app, ["project", "init", "--agent", "claude", "--repo", str(repo)]
+    )
+    assert initialized.exit_code == 0, initialized.output
+
+    default_output = runner.invoke(
+        app, ["diff", "--scope", "local", "--agent", "claude", "--repo", str(repo)]
+    )
+    verbose = runner.invoke(
+        app,
+        ["diff", "--all", "--scope", "local", "--agent", "claude", "--repo", str(repo)],
+    )
+
+    assert default_output.exit_code == 0, default_output.output
+    assert "No layers override the packaged defaults." in default_output.output
+    assert "keys from packaged defaults (--all to show)" in default_output.output
+    assert "permissions.allow" not in default_output.output
+    assert verbose.exit_code == 0, verbose.output
+    assert "permissions.allow" in verbose.output
+    assert "(--all to show)" not in verbose.output
+
+
+def test_diff_summarizes_drift_per_artifact(isolated_env) -> None:
+    _, _, repo = isolated_env
+    initialized = runner.invoke(
+        app, ["project", "init", "--agent", "codex", "--repo", str(repo)]
+    )
+    assert initialized.exit_code == 0, initialized.output
+    native = repo / ".codex" / "config.toml"
+    document = tomlkit.loads(native.read_text())
+    document["model"] = "gpt-5"
+    native.write_text(tomlkit.dumps(document))
+
+    result = runner.invoke(
+        app, ["diff", "--scope", "local", "--agent", "codex", "--repo", str(repo)]
+    )
+
+    assert result.exit_code == 0, result.output
+    assert "checked artifacts" in result.output
+    assert '-model = "gpt-5"' in result.output
+
+
+def test_diff_write_captures_hand_edited_hook_into_packaged_source(
+    isolated_env, tmp_path, monkeypatch
+) -> None:
+    _, _, repo = isolated_env
+    fake_scripts_dir = tmp_path / "packaged-scripts"
+    shutil.copytree(CodexAdapter()._shared_scripts_dir, fake_scripts_dir)
+    monkeypatch.setattr(
+        CodexAdapter, "_shared_scripts_dir", property(lambda self: fake_scripts_dir)
+    )
+
+    initialized = runner.invoke(
+        app, ["project", "init", "--agent", "codex", "--repo", str(repo)]
+    )
+    assert initialized.exit_code == 0, initialized.output
+    hook = repo / ".rn-forge" / "agentkit" / "codex" / "hooks" / "post-edit-format.sh"
+    hook.write_text("#!/usr/bin/env bash\necho hand-edited\n")
+
+    result = runner.invoke(
+        app,
+        [
+            "diff",
+            "--write",
+            "--scope",
+            "local",
+            "--agent",
+            "codex",
+            "--repo",
+            str(repo),
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    record = json.loads(result.stdout)[0]
+    captured = {item["artifact"]: item for item in record["capture_assets"]}
+    assert captured["hooks/post-edit-format.sh"]["changed"] is True
+    assert (
+        fake_scripts_dir / "post-edit-format.sh"
+    ).read_text() == "#!/usr/bin/env bash\necho hand-edited\n"
 
 
 def test_install_commands_warn_when_jq_is_missing(isolated_env, monkeypatch) -> None:

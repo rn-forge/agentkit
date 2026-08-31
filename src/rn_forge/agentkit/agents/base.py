@@ -14,7 +14,7 @@ from pydantic import BaseModel, ValidationError
 
 from ..core.artifacts import Artifact
 from ..core.config import ConfigMerger, MergeResult, defaults_for
-from ..core.io import read_config
+from ..core.io import loads_config, read_config
 from ..core.paths import global_root, project_scope_root
 from ..core.render import RenderEngine, RenderError
 
@@ -79,6 +79,18 @@ class AgentAdapter(ABC):
         Returns:
             Ordered artifact declarations, including exactly one ``config``.
         """
+
+    def parse_native_text(self, text: str, artifact: Artifact) -> dict[str, Any]:
+        """Parse rendered native text using an artifact's on-disk format.
+
+        The staged copy of a rendered artifact is disposable, so callers that
+        need the *expected* native mapping render it in memory and parse it
+        here instead of reading ``rendered/``.
+
+        Raises:
+            ValueError: The text is not a valid mapping-rooted native config.
+        """
+        return loads_config(text, Path(artifact.native_relative).suffix.lstrip("."))
 
     def validate(self, config: dict[str, Any]) -> list[str]:
         """Return human-readable schema errors for a merged configuration."""

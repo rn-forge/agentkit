@@ -98,7 +98,7 @@ def apply_adapter(
     Raises:
         ValueError: The merged configuration fails adapter validation.
     """
-    merged, _ = resolve_config(adapter, scope, repo_root, overrides)
+    merged, _ = resolve_config(adapter, scope, repo_root)
     errors = adapter.validate(merged.config)
     if errors:
         raise ValueError("; ".join(errors))
@@ -281,12 +281,19 @@ def capture_adapter(
 ) -> OperationResult:
     """Capture structural native-config additions and changes into managed source.
 
+    The baseline is rendered from the persisted layers in memory rather than read
+    from ``rendered/``: that staging copy is disposable — it is gitignored, so a
+    fresh clone has none — and it can be stale, which would capture drift the
+    user never made.
+
     Append-merged lists capture only a suffix added to the rendered value. Key
     removals and destructive edits to append-merged lists cannot be represented
     by the current layered merge model and are rejected.
 
+    A scope with no native config yet has nothing to capture, and reports that
+    instead of failing, so ``diff --write`` still shows the drift it found.
+
     Raises:
-        FileNotFoundError: The native or rendered primary config is missing.
         ValueError: Native config is invalid or contains an unsupported removal.
     """
     root = scope_root(scope, repo_root)
@@ -294,13 +301,20 @@ def capture_adapter(
     native = adapter.native_path(scope, repo_root, artifact)
     rendered = _managed_copy_path(adapter, root, scope, artifact, native)
     if not native.is_file():
-        raise FileNotFoundError(f"Native config does not exist: {native}")
-    if not rendered.is_file():
-        raise FileNotFoundError(
-            f"No rendered config for {adapter.name}; run the scope's apply/update command first"
+        return OperationResult(
+            adapter.name,
+            artifact.key,
+            "capture",
+            False,
+            native,
+            rendered,
+            message="no native config",
         )
 
-    expected = adapter.parse_native(rendered)
+    merged, _ = resolve_config(adapter, scope, repo_root)
+    expected = adapter.parse_native_text(
+        adapter.render(merged.config, scope=scope), artifact
+    )
     actual = adapter.parse_native(native)
     errors = adapter.validate(actual)
     if errors:
@@ -330,6 +344,61 @@ def capture_adapter(
         rendered,
         message="captured" if updates else "unchanged",
     )
+
+
+def capture_assets(
+    adapter: AgentAdapter,
+    scope: Scope,
+    repo_root: Path,
+) -> list[OperationResult]:
+    """Capture hand-edited native hooks/skills back into their packaged source.
+
+    Only artifacts backed by a packaged static source file are eligible —
+    templated and primary-config artifacts are unaffected, and are handled by
+    :func:`capture_adapter` instead. A source outside this checkout (for
+    example an installed, non-editable package) is reported as unwritable
+    rather than raising, since running ``diff --write`` should still finish.
+    """
+    results: list[OperationResult] = []
+    for artifact in adapter.artifacts(scope):
+        if artifact.source is None:
+            continue
+        native = adapter.native_path(scope, repo_root, artifact)
+        if not native.is_file():
+            continue
+        native_bytes = native.read_bytes()
+        source_bytes = (
+            artifact.source.read_bytes() if artifact.source.is_file() else b""
+        )
+        if native_bytes == source_bytes:
+            continue
+        try:
+            atomic_write(artifact.source, native_bytes)
+        except OSError as exc:
+            results.append(
+                OperationResult(
+                    adapter.name,
+                    artifact.key,
+                    "capture-asset",
+                    False,
+                    native,
+                    artifact.source,
+                    message=f"unwritable: {exc}",
+                )
+            )
+            continue
+        results.append(
+            OperationResult(
+                adapter.name,
+                artifact.key,
+                "capture-asset",
+                True,
+                native,
+                artifact.source,
+                message="captured",
+            )
+        )
+    return results
 
 
 def _capture_updates(

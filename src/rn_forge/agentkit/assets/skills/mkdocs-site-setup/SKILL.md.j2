@@ -80,6 +80,56 @@ the repo* (README, CLAUDE.md/AGENTS.md, existing comments), not templated boiler
 "Architecture Overview" page that just restates the nav is worse than not having the page. On a
 reconciliation pass, leave existing prose pages alone; only add pages that are still missing.
 
+### Navigation design for large trees
+
+An explicit `nav:` beats mkdocs' directory-order default the moment any folder holds more files
+than a person wants to scan in one scroll (a changelog-shaped folder — ADRs, dated notes, one file
+per record — crosses that line around 15-20 entries; a folder of a handful of hand-authored guides
+usually doesn't). Left on auto-nav, that folder lists every file flat and, being alphabetically
+first or largest, buries every other top-level section beneath it in the sidebar. Symptoms worth
+treating as this bug even when the user doesn't name it: "the sidebar is one long scroll", "X is
+hard to find", "the ADR/changelog folder dominates the nav".
+
+The fix has three independent parts — apply the ones the tree actually needs, don't reach for all
+three by default:
+
+1. **Tabs for top-level sections** (`navigation.tabs` + `navigation.tabs.sticky`), so each major
+   section (Architecture, Guides, Reference, …) gets its own horizontal tab and its own scoped
+   sidebar, instead of every section's pages stacking into one vertical accordion. Combine with
+   `navigation.indexes` so a section's own tab click lands on that section's `index.md` rather than
+   just expanding a dead header.
+2. **A generated index page as the whole nav entry, for any single folder too large to list flat**
+   (the ADR/changelog case). Nav-link only that folder's `index.md`; leave every individual record
+   out of `nav:` entirely and let the index page's own table (or search) be the browse surface. This
+   is a pure `nav:` edit — it costs nothing structurally and directly fixes the burying symptom.
+   Files left out of `nav:` are unaffected — mkdocs still builds and serves them.
+3. **Group a large-but-not-huge folder into the sub-headings its own index page already uses**,
+   rather than flat-listing every page (e.g. an Architecture folder whose `index.md` already
+   presents its pages under "Foundations" / "Platform contracts" / …) — mirror that grouping as
+   nested `nav:` mappings so the sidebar and the index page agree, instead of inventing a second,
+   competing taxonomy.
+
+**`navigation.path` (breadcrumbs) needs the page to be in `nav:` to have ancestors to show** — a
+page deliberately left out of `nav:` under rule 2 above renders with an empty breadcrumb. **Don't
+compensate with a content-injected "back to index" link** (e.g. a `hooks:` function that prepends
+one to every excluded page) — it duplicates what the browser back button already does for free, for
+every entry point except a bookmark or an external deep link, and it can't do what would actually
+add value there: land the reader back at their scroll position in the index table rather than its
+top. If that's the real ask, it's a request for an anchor per record in the index page, not a
+back-link on the record page — and whether that's worth the generated-anchor upkeep is a case-by-case
+call, not a default.
+
+Two theme features are free UX wins with no new dependency, worth defaulting on: `search.suggest`
+(autocomplete in the search box) and `search.highlight` (highlights the match in search results).
+
+**Plugins from the [mkdocs catalog](https://github.com/mkdocs/catalog) are a separate decision from
+theme features** — a theme feature is free (already inside `mkdocs-material`, no dependency), a
+plugin is a new dependency and needs the same go-ahead as any other one. Two worth naming when
+relevant, neither installed by default: `mkdocs-awesome-pages-plugin` (per-folder `.pages` ordering
+files) directly conflicts with a repo that already treats `nav:` as the single source of ordering —
+don't propose it there; `mkdocs-redirects` earns its place once pages actually start moving or
+being renamed, to keep old links alive.
+
 ## 2. Python reference — mkdocstrings
 
 1. Add a `docs` dependency group to `pyproject.toml` (skip if already present):

@@ -92,6 +92,19 @@ class CodexAdapter(AgentAdapter):
                     "pre-write-protect.sh",
                 )
             ],
+            Artifact(
+                "hooks/post-write-unwrap-md.sh",
+                Path("codex/hooks/post-write-unwrap-md.sh"),
+                root="share",
+                source=self._shared_scripts_dir / "post-write-unwrap-md.sh",
+                executable=True,
+            ),
+            Artifact(
+                "hooks/unwrap_md.py",
+                Path("codex/hooks/unwrap_md.py"),
+                root="share",
+                source=self._shared_scripts_dir / "unwrap_md.py",
+            ),
             *self.skill_artifacts(self._skills_dir),
         ]
 

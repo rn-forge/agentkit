@@ -79,6 +79,18 @@
           }
         ]
       }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Write|Edit|MultiEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "$HOME/.rn-forge/share/agentkit/claude/hooks/post-write-unwrap-md.sh",
+            "statusMessage": "Unwrapping markdown"
+          }
+        ]
+      }
     ]
   }
 }

@@ -4,5 +4,17 @@
       "path": "."
     }
   ],
-  "settings": {}
+  "settings": {
+    "yaml.disableSchemaDetection": [
+      "**/.github/workflows/*.yml",
+      "**/.github/workflows/*.yaml",
+      "**/.gitea/workflows/*.yml",
+      "**/.gitea/workflows/*.yaml",
+      "**/.forgejo/workflows/*.yml",
+      "**/.forgejo/workflows/*.yaml"
+    ],
+    "yaml.schemas": {
+      "https://taskfile.dev/schema.json": "file:///Users/rohitnarayanan/Devel/workspaces/rn-forge/agentkit/tasks/docs.yml"
+    }
+  }
 }
