@@ -13,11 +13,11 @@ guard_check_bash_command() {
   [ -z "$cmd" ] && return 0
   rm_rf='rm\s+(-[a-zA-Z]*[rR][a-zA-Z]*[fF]|-[a-zA-Z]*[fF][a-zA-Z]*[rR])\s+'
 
-  if printf '%s' "$cmd" | grep -qiE "${rm_rf}/"; then
+  if printf '%s' "$cmd" | grep -qiE "${rm_rf}[\"']?/[\"']?(\$|[[:space:]])"; then
     _guard_block "Deletes entire filesystem"
     return 1
   fi
-  if printf '%s' "$cmd" | grep -qiE "${rm_rf}~"; then
+  if printf '%s' "$cmd" | grep -qiE "${rm_rf}[\"']?~[\"']?(\$|[[:space:]])"; then
     _guard_block "Deletes home directory"
     return 1
   fi
@@ -29,7 +29,7 @@ guard_check_bash_command() {
     _guard_block "Wildcard recursive delete"
     return 1
   fi
-  if printf '%s' "$cmd" | grep -qiE "${rm_rf}\."; then
+  if printf '%s' "$cmd" | grep -qiE "${rm_rf}[\"']?\.[\"']?(\$|[[:space:]])"; then
     _guard_block "Deletes current directory"
     return 1
   fi
