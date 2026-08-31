@@ -60,6 +60,16 @@ tasks:
     cmds:
       - task: quality:test:python
 
+  test:coverage:
+    desc: Run the pytest suite with an XML coverage report (used by CI/Sonar).
+    cmds:
+      - task: quality:test:coverage
+
+  version:
+    desc: Print the package version from pyproject.toml.
+    cmds:
+      - task: workspace:version
+
   build:
     desc: Build the wheel and sdist into dist/.
     cmds:

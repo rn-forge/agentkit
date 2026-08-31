@@ -7,6 +7,13 @@ tasks:
     cmds:
       - uv sync --group dev --group docs
 
+  version:
+    desc: Print the package version from pyproject.toml.
+    internal: true
+    silent: true
+    cmds:
+      - uv version --short
+
   build:
     desc: Build the wheel and sdist into dist/.
     internal: true

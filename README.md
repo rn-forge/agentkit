@@ -27,6 +27,49 @@ agentkit version
 `RNF_HOME` overrides `~/.rn-forge`. Installation currently runs from a checkout
 of this repository. The installer does not edit shell rc files.
 
+### Setting up a new machine
+
+1. Install prerequisites: `jq` (required by every hook) and, optionally,
+   `gitleaks` for prompt-secret scanning — see
+   [the dependency table](docs/guides/development.md#external-dependencies)
+   for exact package names per OS.
+2. Clone this repository and run the installer from the checkout:
+
+   ```bash
+   git clone https://github.com/rn-forge/agentkit.git
+   cd agentkit
+   ./install.sh
+   ```
+
+3. Add `~/.rn-forge/bin` to your shell's `PATH` (the installer does not edit
+   rc files for you), then confirm the CLI resolves:
+
+   ```bash
+   export PATH="$HOME/.rn-forge/bin:$PATH"   # add this line to your shell rc
+   agentkit version
+   ```
+
+4. Optionally enable shell completions once per shell:
+
+   ```bash
+   agentkit --install-completion
+   exec zsh   # or restart your shell
+   ```
+
+5. Apply the global default pack to this machine's agent configs:
+
+   ```bash
+   agentkit global apply --dry-run   # preview first
+   agentkit global apply
+   ```
+
+6. In any repository you want agentkit to manage:
+
+   ```bash
+   agentkit project init
+   agentkit project update
+   ```
+
 `jq` is **required** — every hook parses its JSON event payload with it.
 `gitleaks` is recommended for prompt-secret scanning. See
 [the development guide](docs/guides/development.md#external-dependencies) for the
@@ -68,8 +111,10 @@ Global commands are `apply`, `sync`, `reset`, and `list`. Project commands are
 
 ## Documentation
 
-The full documentation is an MkDocs site under [`docs/`](docs/). Build it with
-`task docs:serve` for a live-reloading local preview.
+The full documentation is published at
+**[rn-forge.github.io/agentkit](https://rn-forge.github.io/agentkit/)**, built
+from the MkDocs site under [`docs/`](docs/). Build it with `task docs:serve`
+for a live-reloading local preview.
 
 | Page | Covers |
 | --- | --- |

@@ -48,3 +48,9 @@ tasks:
     internal: true
     cmds:
       - uv run pytest -q
+
+  test:coverage:
+    desc: Run the pytest suite with an XML coverage report for Sonar.
+    internal: true
+    cmds:
+      - uv run pytest -q --cov=rn_forge.agentkit --cov-report=xml:coverage.xml
