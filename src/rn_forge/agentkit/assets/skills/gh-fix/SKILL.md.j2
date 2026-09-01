@@ -1,0 +1,75 @@
+---
+name: gh-fix
+description: Diagnose and fix a failing GitHub Actions pipeline or a PR whose checks are red — fetch the actual failure logs via the gh CLI, find the root cause, reproduce it locally, apply the minimal fix, and validate with the repo's own lint/typecheck/test commands. Takes an optional argument: a PR number, a workflow run ID/URL, or nothing (infers the current branch's PR or latest run). Use when the user says things like "check the pipeline failure", "why did CI fail", "fix the PR check", "the build is red", or pastes a failing Actions run/PR link. Distinguishes a real code/config bug from an infra flake (network blip, rate limit, runner timeout) and recommends a re-run instead of a code change for the latter. Does not commit or push.
+{% if agent == "claude" %}allowed-tools: Read, Write, Edit, Bash, Glob, Grep
+{% endif %}---
+
+# gh-fix
+
+Repeating workflow for turning a red GitHub Actions run or a red PR check back to green. The
+failure mode this skill exists to avoid is guessing at a fix from the PR title or a half-read
+log snippet — always pull the actual failed step's output first.
+
+## Precondition — the `gh` CLI
+
+This skill drives GitHub via the **`gh` CLI**, not the GitHub API directly. Confirm `gh auth status`
+succeeds and the current directory is inside the target repo (`gh repo view`) before doing anything
+else. If `gh` isn't installed or isn't authenticated, **stop and say so** — name it as the blocker
+rather than falling back to scraping the Actions web UI.
+
+## 0. Resolve the target
+
+This skill takes an optional argument narrowing the target. A bare number is ambiguous — PR and
+issue numbers share one counter on GitHub, and a run ID is just a (much larger) number too — so
+resolve it in this order rather than guessing from magnitude alone:
+
+- **A run URL** (contains `/actions/runs/`): unambiguous, use `gh run view <id>` directly.
+- **A bare number or `#n`**: try `gh pr view <n>` first — "the PR/pipeline is failing" is the
+  common case this skill exists for. If `gh` reports it's not a PR (or it *is* a PR but has no
+  checks at all), try `gh run view <n>` next, since run IDs and small PR/issue numbers occupy
+  different practical ranges and rarely collide. If it resolves to an **issue** instead of a PR,
+  stop and say so — issues don't have CI checks, so there's nothing here for this skill to fix.
+- **No argument**: infer from context —
+  - If the current branch has an open PR, use `gh pr view --json number,headRefName` to find it, then treat it like the PR-number case.
+  - Otherwise use `gh run list --branch "$(git branch --show-current)" --limit 5` and pick the most recent failed run, or `gh run list --status failure --limit 5` repo-wide if the user's intent is clearly "the pipeline" rather than "my PR."
+
+State which run(s) or PR you resolved to before proceeding, so it's unambiguous which failure is being chased.
+
+## 1. Fetch the actual failure
+
+Don't work from the summary status alone. Pull the real logs:
+
+- `gh run view <run-id> --log-failed` — logs for only the failed steps/jobs. Prefer this over `--log` (full log) unless the failed-step output alone is inconclusive (e.g. a setup step failed and you need the job's earlier steps for context).
+- If multiple jobs failed, fetch each; don't assume they share one root cause — a matrix build can have one real failure and several downstream cancellations.
+- If the PR has multiple failing checks (e.g. a required GitHub check plus a separate status like a Sonar quality gate), fetch each failing check's detail (`gh pr checks <n> --json` for structured status, then drill into each) rather than only the first one you see.
+
+## 2. Classify the failure
+
+Before touching any code, decide which of these it is — they call for different responses:
+
+- **Real code/config bug**: a lint violation, a failing test, a type error, a build/compile failure, a broken CI config (bad YAML, wrong path, missing secret reference that should exist). → fix in step 3.
+- **Infra flake**: a network timeout hitting an external registry/service, a rate limit, a runner OOM/timeout unrelated to the changed code, a transient dependency-resolution hiccup. Evidence: the same job passed on a previous run with no relevant diff, or the error is clearly network/infra-shaped (DNS, connection reset, 503, "runner lost communication"). → **don't modify code**. Recommend `gh run rerun <run-id> --failed` and say why you believe it's transient. If the user wants, offer to re-run it (that's a low-risk, reversible action) but confirm first since it consumes CI minutes and could mask a real intermittent bug if wrong.
+- **Flaky test**: fails intermittently under no code change relevant to it. Check `gh run list` history for the same job on recent runs to confirm the pattern before calling it flaky rather than real — don't use "flaky" as an excuse to skip a real bug on the first hint of doubt.
+
+If genuinely ambiguous, say so and default to treating it as real — root-cause it — since silently re-running a real failure wastes more time than briefly investigating a flake.
+
+## 3. Reproduce and fix
+
+- Identify what local command mirrors the failed CI step. Check this repo's own conventions first (CLAUDE.md/AGENTS.md, README, CI workflow file, `Taskfile.yml`/`Makefile`/`package.json` scripts) for the sanctioned entrypoint — many repos funnel everything through one command runner (e.g. `task lint`, `make test`) rather than calling the underlying tool directly; use that, not a raw invocation, if one exists.
+- Run the **narrowest** local command that reproduces the failure (the specific test file/package, not the whole suite) before changing anything, so you have a before/after.
+- Apply the minimal fix that addresses the root cause shown in the log — not a broader refactor, not suppressing the check (disabling a test, widening a lint ignore, bumping a version pin blindly) unless the log itself shows that's the correct fix (e.g. a genuinely outdated pinned dependency causing the failure).
+- If the failure is in CI configuration itself (workflow YAML, a missing input, a wrong job dependency) rather than repo code, fix the workflow file directly.
+
+## 4. Validate
+
+Re-run the same narrow local command(s) from step 3 and confirm they now pass. If the CI job runs several stages (lint, then test, then build), re-check each stage your fix could plausibly affect — not just the one that originally failed.
+
+## 5. Report
+
+Summarize:
+- Which run/PR and which job(s)/check(s) were failing.
+- Root cause, in one or two sentences, with the specific log line/error that pointed to it.
+- What was changed (files) — or, for an infra flake, why no code change was made and that a re-run is recommended.
+- Local validation evidence (command + pass/fail).
+
+Do not commit, push, or trigger a re-run yourself — leave changes in the working tree and name the re-run as something the user can do (`gh run rerun <run-id> --failed`), unless they've explicitly asked you to push or re-run in this conversation.

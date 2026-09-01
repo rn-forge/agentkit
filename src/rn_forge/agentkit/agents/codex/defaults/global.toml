@@ -1,5 +1,6 @@
 personality = "pragmatic"
 model_reasoning_effort = "medium"
+# CLI default is "auto"; pinned to "concise" for parity with Claude's concise output style.
 model_reasoning_summary = "concise"
 approval_policy = "on-request"
 sandbox_mode = "workspace-write"

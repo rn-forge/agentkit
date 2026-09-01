@@ -89,7 +89,13 @@ def emit_operations(ctx: typer.Context, results: list[OperationResult]) -> None:
         if result.diff and result.message == "dry-run":
             console.print(result.diff, markup=False)
         if result.backup_path:
-            console.print(f"  backup: {result.backup_path}")
+            if result.message == "drift detected":
+                console.print(
+                    "  [yellow]warning:[/yellow] native file changed outside "
+                    f"agentkit since last apply — backed up to {result.backup_path}"
+                )
+            else:
+                console.print(f"  backup: {result.backup_path}")
 
 
 def fail(message: str) -> NoReturn:

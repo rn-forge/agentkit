@@ -497,9 +497,11 @@ def _apply_resolved(
 
         prior = store.get(native)
         backup = None
+        drifted = False
         if native.is_file() and current_hash != digest:
             if prior is None or prior.get("hash") != current_hash:
                 backup = backup_file(native, root)
+                drifted = prior is not None
 
         mode = _artifact_mode(artifact)
         if rendered_hash != digest:
@@ -527,6 +529,7 @@ def _apply_resolved(
                 rendered,
                 diff,
                 backup,
+                message="drift detected" if drifted else "",
             )
         )
     return results

@@ -1,6 +1,6 @@
 [project]
 name = "rn-forge-agentkit"
-version = "0.1.1"
+version = "0.2.0"
 description = "agent-agnostic setup and configuration for AI coding tools (Claude Code, Codex)"
 readme = "README.md"
 authors = [{ name = "Rohit Narayanan", email = "rohit.nn@gmail.com" }]

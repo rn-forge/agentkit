@@ -43,7 +43,7 @@ agentkit_install() {
   mkdir -p "${product_home}" || return 1
   (
     cd "${repo_root}" || exit 1
-    UV_PROJECT_ENVIRONMENT="${target}" uv sync --frozen --no-dev
+    UV_PROJECT_ENVIRONMENT="${target}" uv sync --frozen --no-dev --no-editable
   ) || return 1
 
   ln -sfn "v${version}" "${product_home}/current" || return 1

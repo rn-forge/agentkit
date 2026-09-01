@@ -259,7 +259,9 @@ divergence is intentional and recorded:
   it cannot mirror Claude's `permissions.deny` Read list. Its write guard still
   protects sensitive in-repo paths. Revisit if Codex ships a read matcher.
 - **Compaction context injection is Claude-only.** Codex has no equivalent
-  context-injection event.
+  context-injection event, so `session-compact-context.sh` stands alone rather
+  than living on the shared guard lib with the agent-spanning guards. Revisit
+  the unification if a second agent grows an equivalent event.
 
 ### External dependencies
 
@@ -369,9 +371,12 @@ conflicts between developers on different agentkit versions.
 
 `install.sh` builds a versioned environment under
 `$RNF_HOME/agentkit/v<version>/`, updates the `current` symlink, and links the
-CLI at `$RNF_HOME/bin/agentkit`. It installs **from a checkout only** (no
-release-tarball streaming yet), so this repo path must remain available during install. It does not edit shell rc
-files.
+CLI at `$RNF_HOME/bin/agentkit`. It runs from a checkout, but a checkout is no
+longer required to install: `scripts/bootstrap.sh` downloads the source
+tarball for the latest GitHub release, extracts it to a temp dir, and runs
+`install.sh` from there — `curl -fsSL
+https://raw.githubusercontent.com/rn-forge/agentkit/main/scripts/bootstrap.sh
+| bash`. Neither script edits shell rc files.
 
 ## 11. Testing and typing
 
@@ -502,25 +507,51 @@ tests, 2 new seed-behavior tests), `ruff check src tests` clean, `pyright src`
 init` seeds both files, a hand edit survives `project update`, and `diff`
 reports no drift.
 
+**Phase 8 — release install path and Pages verification (2026-08-31).** The
+repo gained its GitHub remote (`rn-forge/agentkit`), closing out the two
+install/deploy items that had been blocked on that.
+
+| Item | Outcome |
+| - | - |
+| Clone-free install | `scripts/bootstrap.sh` added: resolves the latest GitHub release, downloads its source tarball to a temp dir, and runs `install.sh` from there — no `git clone` needed (§10) |
+| Editable-install bug | `install.sh`'s `uv sync` was editable by default, so a CLI installed from a temp dir (as bootstrap does) pointed back at a path deleted right after; fixed with `--no-editable`, which is also correct for a deployed CLI vs. a dev checkout |
+| Pages deploy | Verified end-to-end: remote added, Pages enabled (Source: GitHub Actions), `.github/workflows/docs.yml` ran successfully on `main`, site live at <https://rn-forge.github.io/agentkit/> (HTTP 200) |
+| GitHub Release publish step | Verified already working (not missing, as first suspected): CI's `publish` job tags the version, creates a GitHub Release, and uploads the wheel/sdist — confirmed via `v0.1.1` release existing |
+
+**Validation (2026-08-31):** `task lint` clean. Bootstrap flow tested twice —
+once against the already-tagged `v0.1.1` release (reproduced the editable-
+install bug), once via `git archive HEAD` piped through the patched
+`install.sh` (confirmed `agentkit version` works after the source dir is
+removed). Pages URL confirmed live with `curl -o /dev/null -w '%{http_code}'`.
+
+**Phase 9 — default-value curation (2026-08-31).** Kiln-ported config values
+(models, policies) had never been reviewed on their merits — Phase 3 curated
+the asset pack's structure and safety, not every value. Reviewed all four
+packaged default files (`claude/defaults/{global,local}.json`,
+`codex/defaults/{global,local}.toml`) against current Claude Code and Codex
+CLI documentation.
+
+| Item | Outcome |
+| - | - |
+| Claude `effortLevel: "medium"`, `outputStyle: "concise"` | Confirmed current and correct; `outputStyle` is load-bearing for the §6.3 instruction single-sourcing, not an arbitrary port |
+| Claude `permissions.deny`/`allow`/`ask` lists | Confirmed still aligned with the Phase 3 item 1/6 curation — no stale entries found |
+| Codex `personality`, `model_reasoning_effort`, `approval_policy`, `sandbox_mode`, `profiles.*` | Confirmed current and correct against upstream docs; no changes needed |
+| Codex `model_reasoning_summary = "concise"` | Kept — CLI default is `auto`, but `"concise"` is a deliberate parity choice with Claude's output style; added a comment in `global.toml` so it doesn't read as an unreviewed leftover |
+| `codex/schema.py` `model_reasoning_effort` literal | Was missing the `"none"` value present in current upstream docs; added |
+
+No default values changed as a result of the review — the kiln port held up.
+This closes the item as "reviewed and confirmed" rather than "found and fixed."
+
 ## 13. Pending
 
 Open items, none blocking. All were considered and consciously postponed.
 Collected here so nothing pending is left scattered in earlier sections.
 
-- **Write-back phase 2 — capture to kit checkout.** Point `diff --write` at a
-  checked-out agentkit repo (packaged `defaults/` + `assets/`) so captures can
-  be committed and released as a new default-pack version — the Brewfile loop.
-  Phase 1 is the enabler; this is the remaining half.
-- **Release install path.** `install.sh` still requires a checkout of this
-  repo; no tarball or curl streaming.
-- **Default-value curation.** Kiln config _values_ (models, policies) were
-  ported verbatim and have never been reviewed on their merits. Phase 3 curated
-  the asset pack's structure and safety, not every value.
-- **Claude-only hooks on the shared guard lib.** `session-compact-context.sh`
-  still stands alone; only the agent-spanning guards were unified. Revisit if a
-  second agent grows an equivalent event.
-- **Codex secret-read protection.** Blocked upstream — Codex exposes no
-  read-tool matcher (§7, accepted exclusions). Revisit if one ships.
-- **Pages deploy is unverified.** This repo has no GitHub remote yet, so
-  `.github/workflows/docs.yml` has never run. Pages must also be enabled
-  manually (Source: GitHub Actions).
+- **Write-back phase 2 — capture config values to packaged defaults.** Narrower
+  than originally scoped: `capture_assets` (§9a) already writes hand-edited
+  hooks/skills back to their packaged source in an editable checkout, so the
+  `assets/` half of the Brewfile loop is done. What remains is `config.toml`
+  changes captured by `capture_adapter` — they only ever land in the scope's
+  managed `config.toml`, never in the packaged `defaults/global.json` /
+  `global.toml` those scopes render from, so a runtime config change can't be
+  promoted into a new default-pack version the way a hook edit now can.

@@ -366,7 +366,7 @@ def test_prompt_secret_guard_reports_gitleaks_execution_error(
         ("html", "npx", "prettier --write"),
         ("scss", "npx", "prettier --write"),
         ("css", "npx", "prettier --write"),
-        ("md", "npx", "prettier --write"),
+        ("md", "npx", "markdownlint-cli2 --fix"),
         ("java", "google-java-format", "--replace"),
         ("sh", "shfmt", "-w"),
     ],

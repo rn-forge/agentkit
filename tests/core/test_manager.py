@@ -66,6 +66,24 @@ def test_dry_run_writes_nothing_and_manual_native_is_backed_up(isolated_env) -> 
     applied = apply_adapter(adapter, "global", repo)[0]
     assert applied.backup_path is not None
     assert applied.backup_path.read_text() == 'model = "manual"\n'
+    assert applied.message == ""
+
+
+def test_apply_warns_when_native_drifted_since_last_apply(isolated_env) -> None:
+    _, _, repo = isolated_env
+    adapter = CodexAdapter()
+    source = global_root() / "codex" / "config.toml"
+    write_config(source, {"model": "managed"})
+    apply_adapter(adapter, "global", repo)
+
+    native = adapter.global_native_path()
+    native.write_text('model = "manual"\n')
+    write_config(source, {"model": "managed-2"})
+    applied = apply_adapter(adapter, "global", repo)[0]
+
+    assert applied.backup_path is not None
+    assert applied.backup_path.read_text() == 'model = "manual"\n'
+    assert applied.message == "drift detected"
 
 
 def test_project_init_does_not_overwrite_existing_config(isolated_env) -> None:

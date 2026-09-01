@@ -1,6 +1,6 @@
 ---
 name: sonar-cleanup
-description: Fetch all open SonarCloud/SonarQube findings for the current repo via the sonarqube MCP connection — issues (including security findings) and quality-gate condition failures (coverage, duplication, ratings) — fix what's fixable in the codebase, and validate with the repo's own lint/typecheck/test commands. Use when the user says things like "check sonar issues", "fix sonar issues", "clean up sonar", "why is the quality gate failing", or references a Sonar quality gate report with remaining findings. Does not commit or push.
+description: Fetch open SonarCloud/SonarQube findings for the current repo via the sonarqube MCP connection — issues (including security findings) and quality-gate condition failures (coverage, duplication, ratings) — fix what's fixable in the codebase, and validate with the repo's own lint/typecheck/test commands. Defaults to project-wide (default branch) scope; pass a PR number or branch name as an argument to narrow to just that PR's or branch's findings. Use when the user says things like "check sonar issues", "fix sonar issues", "clean up sonar", "why is the quality gate failing", or references a Sonar quality gate report with remaining findings. Does not commit or push.
 ---
 
 # Sonar Cleanup
@@ -22,7 +22,7 @@ they are frequently deferred rather than absent.
 needs to add the server to this harness's own MCP configuration and supply a token. Name that as the
 blocker and end the run.
 
-## 0. Identify the project
+## 0. Identify the project and scope
 
 Determine the Sonar project key (and organization, for SonarCloud) from the current repo — check, in order:
 - `.sonarlint/connectedMode.json` (`projectKey`, `sonarCloudOrganization`/`sonarQubeUri`, `region`)
@@ -31,7 +31,13 @@ Determine the Sonar project key (and organization, for SonarCloud) from the curr
 
 If none of these exist, ask the user for the project key/org rather than guessing.
 
-If the repo has an open PR that CI has analyzed, prefer `pullRequest` (discover the Sonar PR key via `list_pull_requests`) over `branch` for all lookups below, per the sonarqube MCP server's own instructions. Otherwise use `branch` (discover via `list_branches`), or omit both to get the default/main branch.
+This skill takes an optional argument narrowing the scope: a PR number/key, or a branch name.
+
+- **No argument (default)**: use `branch` scoped to the project's default/main branch (omit both `branch` and `pullRequest`, or pass the main branch explicitly — discover via `list_branches`). This is project-wide, all-time findings — the right default for "check/fix/clean up sonar issues," which means the whole project, not just a diff. Do **not** auto-switch to `pullRequest` scope just because an open PR happens to exist — `pullRequest` analysis only reports issues introduced by that PR's diff and will silently under-report, which is the opposite of what a blanket cleanup request wants.
+- **Argument is a PR number/key**: resolve it via `list_pull_requests` and use `pullRequest` for all lookups below. Use this path when the user is explicitly asking about a specific PR's own findings (e.g. "does PR 42 have sonar issues").
+- **Argument is a branch name**: use `branch` with that name (discover/validate via `list_branches`) for all lookups below.
+
+State which scope you're using at the start of the run so it's unambiguous.
 
 ## 1. Fetch all findings
 

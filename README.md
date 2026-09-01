@@ -19,13 +19,15 @@ The installer creates a versioned environment under
 `~/.rn-forge/bin/agentkit`:
 
 ```bash
-./install.sh
+curl -fsSL https://raw.githubusercontent.com/rn-forge/agentkit/main/scripts/bootstrap.sh | bash
 export PATH="$HOME/.rn-forge/bin:$PATH"
 agentkit version
 ```
 
-`RNF_HOME` overrides `~/.rn-forge`. Installation currently runs from a checkout
-of this repository. The installer does not edit shell rc files.
+`RNF_HOME` overrides `~/.rn-forge`. `bootstrap.sh` fetches the latest GitHub
+release's source and runs `install.sh` from it; run `./install.sh` directly
+from a checkout instead if you're developing agentkit itself. The installer
+does not edit shell rc files.
 
 ### Setting up a new machine
 
@@ -33,13 +35,16 @@ of this repository. The installer does not edit shell rc files.
    `gitleaks` for prompt-secret scanning — see
    [the dependency table](docs/guides/development.md#external-dependencies)
    for exact package names per OS.
-2. Clone this repository and run the installer from the checkout:
+2. Install agentkit — no manual clone needed. `bootstrap.sh` downloads the
+   source tarball for the latest GitHub release and runs the installer from
+   it:
 
    ```bash
-   git clone https://github.com/rn-forge/agentkit.git
-   cd agentkit
-   ./install.sh
+   curl -fsSL https://raw.githubusercontent.com/rn-forge/agentkit/main/scripts/bootstrap.sh | bash
    ```
+
+   To install from a checkout instead (e.g. for development), run
+   `./install.sh` directly from the repo root.
 
 3. Add `~/.rn-forge/bin` to your shell's `PATH` (the installer does not edit
    rc files for you), then confirm the CLI resolves:

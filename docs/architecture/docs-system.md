@@ -53,3 +53,8 @@ append-only. These architecture pages describe the system as it is now.
   Python-only variant: mkdocstrings, no frontend generator, no `gen-docs.sh`.
   README slimmed to overview/install/quickstart with detail migrated here.
   `docs/openclaw-tailscale-setup.md` adopted as `docs/runbooks/openclaw-tailscale.md`.
+- 2026-08-31: reconciliation pass. Reordered top-level nav to
+  Home → Architecture → Guides → Runbooks → Reference → Specs, matching the
+  skill's canonical order (Reference had been placed before Runbooks). Added
+  the free Material theme wins — `search.suggest`, `search.highlight`, and a
+  light/dark `palette` toggle — since none had been set.

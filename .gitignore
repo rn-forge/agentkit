@@ -8,14 +8,14 @@ build/
 dist/
 wheels/
 *.egg-info
+.pytest_cache/
+.ruff_cache/
 
 # Virtual environments
 .venv
 
-## temp folders
-.out
-.pytest_cache
-.ruff_cache
+# generated files/folders
+.docs-site/
 .sonar-cleanup/
 .coverage
 coverage.xml
@@ -29,4 +29,3 @@ coverage.xml
 # END rn-forge agentkit
 
 # docs site build output
-.docs-site

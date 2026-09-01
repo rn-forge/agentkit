@@ -21,7 +21,7 @@ class CodexConfig(BaseModel):
         Literal["read-only", "workspace-write", "danger-full-access"] | None
     ) = None
     model_reasoning_effort: (
-        Literal["minimal", "low", "medium", "high", "xhigh"] | None
+        Literal["none", "minimal", "low", "medium", "high", "xhigh"] | None
     ) = None
     model_reasoning_summary: str | None = None
     web_search: Literal["disabled", "cached", "live"] | None = None

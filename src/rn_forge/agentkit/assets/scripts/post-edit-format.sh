@@ -17,19 +17,22 @@ run_formatter() {
 }
 
 case "$FILE" in
-  *.py)
-    command -v ruff >/dev/null 2>&1 && run_formatter ruff ruff format "$FILE"
-    ;;
-  *.ts | *.tsx | *.js | *.jsx | *.json | *.html | *.scss | *.css | *.md)
-    command -v npx >/dev/null 2>&1 && run_formatter prettier npx prettier --write "$FILE"
-    ;;
-  *.java)
-    command -v google-java-format >/dev/null 2>&1 && run_formatter google-java-format google-java-format --replace "$FILE"
-    ;;
-  *.sh)
-    command -v shfmt >/dev/null 2>&1 && run_formatter shfmt shfmt -w "$FILE"
-    ;;
-  *) ;;
+*.py)
+  command -v ruff >/dev/null 2>&1 && run_formatter ruff ruff format "$FILE"
+  ;;
+*.ts | *.tsx | *.js | *.jsx | *.json | *.html | *.scss | *.css)
+  command -v npx >/dev/null 2>&1 && run_formatter prettier npx prettier --write "$FILE"
+  ;;
+*.md)
+  command -v npx >/dev/null 2>&1 && run_formatter markdownlint-cli2 npx markdownlint-cli2 --fix "$FILE"
+  ;;
+*.java)
+  command -v google-java-format >/dev/null 2>&1 && run_formatter google-java-format google-java-format --replace "$FILE"
+  ;;
+*.sh)
+  command -v shfmt >/dev/null 2>&1 && run_formatter shfmt shfmt -w "$FILE"
+  ;;
+*) ;;
 esac
 
 exit 0
