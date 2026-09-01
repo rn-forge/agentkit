@@ -1,0 +1,10 @@
+wrap = 80
+exclude = ["src/rn_forge/agentkit/assets/instructions/style.md"]
+
+[plugin.tables]
+compact_tables = true
+
+[plugin.mkdocs]
+align_semantic_breaks_in_lists = true
+ignore_missing_references = true
+no_mkdocs_math = true

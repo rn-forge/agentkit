@@ -96,6 +96,41 @@ def test_project_init_update_status(isolated_env) -> None:
     assert json.loads(status.stdout)[1]["agent"] == "codex"
 
 
+def test_project_remove_strips_hooks_and_working_data(isolated_env) -> None:
+    _, _, repo = isolated_env
+    initialized = runner.invoke(app, ["project", "init", "--repo", str(repo)])
+    assert initialized.exit_code == 0, initialized.output
+    assert (repo / ".codex" / "hooks.json").exists()
+    assert "hooks" in json.loads((repo / ".claude/settings.local.json").read_text())
+    gitignore = (repo / ".gitignore").read_text()
+    assert "# BEGIN rn-forge agentkit" in gitignore
+
+    result = runner.invoke(app, ["project", "remove", "--repo", str(repo), "--yes"])
+    assert result.exit_code == 0, result.output
+
+    local_settings = json.loads((repo / ".claude/settings.local.json").read_text())
+    assert "hooks" not in local_settings
+    assert local_settings["permissions"]["allow"]
+    assert not (repo / ".codex" / "hooks.json").exists()
+    assert not (repo / ".rn-forge" / "agentkit").exists()
+    assert "# BEGIN rn-forge agentkit" not in (repo / ".gitignore").read_text()
+    assert (repo / "CLAUDE.md").exists()
+    assert (repo / "AGENTS.md").exists()
+
+
+def test_project_remove_dry_run_changes_nothing(isolated_env) -> None:
+    _, _, repo = isolated_env
+    initialized = runner.invoke(app, ["project", "init", "--repo", str(repo)])
+    assert initialized.exit_code == 0, initialized.output
+
+    result = runner.invoke(app, ["project", "remove", "--repo", str(repo), "--dry-run"])
+    assert result.exit_code == 0, result.output
+
+    assert "hooks" in json.loads((repo / ".claude/settings.local.json").read_text())
+    assert (repo / ".codex" / "hooks.json").exists()
+    assert (repo / ".rn-forge" / "agentkit").exists()
+
+
 def test_project_init_scaffolds_gitignore_once(isolated_env) -> None:
     _, _, repo = isolated_env
     gitignore = repo / ".gitignore"
@@ -199,9 +234,11 @@ def test_doctor_hides_passing_checks_until_all_is_passed(
         app, ["doctor", "--scope", "global", "--agent", "codex", "--all"]
     )
 
-    assert "configuration is valid" not in default.stdout
+    # A passing schema check has no message to match on any more — its row is
+    # the finding, so assert on the row's type instead.
+    assert "schema" not in default.stdout
     assert "--all to show" in default.stdout
-    assert "configuration is valid" in verbose.stdout
+    assert "schema" in verbose.stdout
 
 
 def test_doctor_summarizes_a_fully_passing_report(isolated_env, monkeypatch) -> None:
@@ -242,7 +279,7 @@ def test_doctor_json_reports_every_check_with_a_category(isolated_env) -> None:
         "environment",
         "state",
     }
-    dependencies = [item for item in payload if item["check"] == "dependency"]
+    dependencies = [item for item in payload if item["kind"] == "dependency"]
     assert len(dependencies) == 2
     assert all(item["agent"] is None for item in dependencies)
 
@@ -314,6 +351,45 @@ def test_diff_write_captures_after_the_rendered_copy_is_removed(isolated_env) ->
     assert record["capture"]["changed"] is True
     managed = repo / ".rn-forge" / "agentkit" / "codex" / "config.toml"
     assert tomlkit.loads(managed.read_text())["model"] == "gpt-5"
+
+
+def test_diff_promote_defaults_folds_managed_override_into_packaged_defaults(
+    isolated_env, tmp_path, monkeypatch
+) -> None:
+    """--promote-defaults is opt-in and separate from --write's native capture."""
+    _, _, repo = isolated_env
+    target = tmp_path / "local.toml"
+    target.write_text("")
+    monkeypatch.setattr(CodexAdapter, "defaults_path", lambda self, scope: target)
+    initialized = runner.invoke(
+        app, ["project", "init", "--agent", "codex", "--repo", str(repo)]
+    )
+    assert initialized.exit_code == 0, initialized.output
+    native = repo / ".codex" / "config.toml"
+    document = tomlkit.loads(native.read_text())
+    document["model"] = "gpt-5"
+    native.write_text(tomlkit.dumps(document))
+
+    result = runner.invoke(
+        app,
+        [
+            "diff",
+            "--write",
+            "--promote-defaults",
+            "--scope",
+            "local",
+            "--agent",
+            "codex",
+            "--repo",
+            str(repo),
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    record = json.loads(result.stdout)[0]
+    assert record["capture_defaults"]["changed"] is True
+    assert tomlkit.loads(target.read_text())["model"] == "gpt-5"
 
 
 def test_diff_write_reports_nothing_to_capture_without_a_native_config(
@@ -513,3 +589,58 @@ def _find_commands(value) -> list[str]:
     if isinstance(value, list):
         return [command for item in value for command in _find_commands(item)]
     return []
+
+
+def test_doctor_reports_artifact_rows_as_source_and_target(isolated_env) -> None:
+    """An artifact row carries two real paths and no prose."""
+    _, _, repo = isolated_env
+    runner.invoke(app, ["project", "init", "--repo", str(repo)])
+
+    result = runner.invoke(
+        app, ["--json", "doctor", "--scope", "local", "--repo", str(repo), "--all"]
+    )
+    payload = json.loads(result.stdout)
+    artifacts = [item for item in payload if item["category"] == "artifacts"]
+
+    assert artifacts
+    for item in artifacts:
+        assert item["source"] and Path(item["source"]).exists()
+        assert item["target"]
+        assert item["message"] == ""
+        assert item["kind"] in {"config", "hook", "skill", "doc"}
+
+
+def test_doctor_abbreviates_paths_without_truncating_them(isolated_env) -> None:
+    """Roots are factored into a legend; no path is ever elided to an ellipsis."""
+    _, _, repo = isolated_env
+    runner.invoke(app, ["project", "init", "--repo", str(repo)])
+
+    result = runner.invoke(
+        app, ["doctor", "--scope", "local", "--repo", str(repo), "--all"]
+    )
+
+    assert "$PKG   =" in result.stdout
+    assert "$REPO  =" in result.stdout
+    assert "\u2026" not in result.stdout
+
+
+def test_doctor_exit_code_follows_severity_not_status(
+    isolated_env, monkeypatch
+) -> None:
+    """`missing` is a status; only an `error` severity fails the command."""
+    _, _, repo = isolated_env
+    _fake_binaries(monkeypatch, present=("gitleaks", "codex", "claude"))
+
+    result = runner.invoke(app, ["doctor", "--scope", "local", "--repo", str(repo)])
+
+    payload = runner.invoke(
+        app, ["--json", "doctor", "--scope", "local", "--repo", str(repo)]
+    )
+    missing_jq = [
+        item
+        for item in json.loads(payload.stdout)
+        if item["kind"] == "dependency" and "jq" in item["message"]
+    ]
+    assert missing_jq and missing_jq[0]["severity"] == "error"
+    assert missing_jq[0]["status"] == "missing"
+    assert result.exit_code == 1

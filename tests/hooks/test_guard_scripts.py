@@ -366,7 +366,7 @@ def test_prompt_secret_guard_reports_gitleaks_execution_error(
         ("html", "npx", "--no-install prettier --write"),
         ("scss", "npx", "--no-install prettier --write"),
         ("css", "npx", "--no-install prettier --write"),
-        ("md", "npx", "--no-install markdownlint-cli2 --fix"),
+        ("md", "mdformat", ""),
         ("java", "google-java-format", "--replace"),
         ("sh", "shfmt", "-w"),
     ],
@@ -379,11 +379,13 @@ def test_post_edit_formatter_dispatches_by_extension_for_both_agents(
     arguments: str,
 ) -> None:
     _, rnf, repo = isolated_env
+    subprocess.run(["git", "init", "-q"], cwd=repo, check=True)
     apply_adapter(ClaudeAdapter(), "local", repo)
     apply_adapter(CodexAdapter(), "local", repo)
     local_rnf = repo / ".rn-forge/agentkit"
     file_path = repo / f"sample.{extension}"
     file_path.write_text("content")
+    (repo / ".mdformat.toml").write_text("")
     log = tmp_path / "formatter.log"
     env = os.environ.copy()
     env["PATH"] = _formatter_path(tmp_path)
@@ -411,10 +413,70 @@ def test_post_edit_formatter_dispatches_by_extension_for_both_agents(
 
     assert claude.returncode == 0
     assert codex.returncode == 0
-    assert log.read_text().splitlines() == [
-        f"{formatter} {arguments} {file_path}",
-        f"{formatter} {arguments} {file_path}",
-    ]
+    expected = " ".join(part for part in (formatter, arguments, str(file_path)) if part)
+    assert log.read_text().splitlines() == [expected, expected]
+
+
+def test_post_edit_markdown_formatter_requires_repo_config(
+    isolated_env, tmp_path: Path
+) -> None:
+    _, _, repo = isolated_env
+    subprocess.run(["git", "init", "-q"], cwd=repo, check=True)
+    apply_adapter(ClaudeAdapter(), "local", repo)
+    file_path = repo / "notes.md"
+    file_path.write_text("content")
+    log = tmp_path / "formatter.log"
+    env = os.environ.copy()
+    env["PATH"] = _formatter_path(tmp_path)
+    env["FORMAT_LOG"] = str(log)
+
+    result = _run(
+        repo / ".rn-forge/agentkit",
+        "claude",
+        "post-edit-format.sh",
+        {"tool_input": {"file_path": str(file_path)}},
+        cwd=repo,
+        env=env,
+        local=True,
+    )
+
+    assert result.returncode == 0
+    assert not log.exists()
+
+
+def test_post_edit_markdown_prefers_project_virtualenv(
+    isolated_env, tmp_path: Path
+) -> None:
+    _, _, repo = isolated_env
+    subprocess.run(["git", "init", "-q"], cwd=repo, check=True)
+    apply_adapter(ClaudeAdapter(), "local", repo)
+    file_path = repo / "notes.md"
+    file_path.write_text("content")
+    (repo / ".mdformat.toml").write_text("")
+    project_bin = repo / ".venv/bin"
+    project_bin.mkdir(parents=True)
+    project_formatter = project_bin / "mdformat"
+    project_formatter.write_text(
+        '#!/bin/sh\nprintf \'project-mdformat %s\\n\' "$*" >> "$FORMAT_LOG"\n'
+    )
+    project_formatter.chmod(0o755)
+    log = tmp_path / "formatter.log"
+    env = os.environ.copy()
+    env["PATH"] = _formatter_path(tmp_path)
+    env["FORMAT_LOG"] = str(log)
+
+    result = _run(
+        repo / ".rn-forge/agentkit",
+        "claude",
+        "post-edit-format.sh",
+        {"tool_input": {"file_path": str(file_path)}},
+        cwd=repo,
+        env=env,
+        local=True,
+    )
+
+    assert result.returncode == 0
+    assert log.read_text().strip() == f"project-mdformat {file_path}"
 
 
 def test_post_edit_formatter_reports_failure_without_blocking(
@@ -510,12 +572,12 @@ def _tool_path(tmp_path: Path, names: tuple[str, ...]) -> str:
 
 
 def _formatter_path(tmp_path: Path) -> str:
-    bin_dir = Path(_tool_path(tmp_path, ("bash", "basename", "cat", "jq")))
+    bin_dir = Path(_tool_path(tmp_path, ("bash", "basename", "cat", "git", "jq")))
     script = """#!/bin/sh
 printf '%s %s\\n' "$(basename "$0")" "$*" >> "$FORMAT_LOG"
 exit "${FORMAT_EXIT:-0}"
 """
-    for name in ("ruff", "npx", "google-java-format", "shfmt"):
+    for name in ("ruff", "npx", "mdformat", "google-java-format", "shfmt"):
         path = bin_dir / name
         path.write_text(script)
         path.chmod(0o755)

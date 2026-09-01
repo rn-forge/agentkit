@@ -1,7 +1,16 @@
 {
   "folders": [
     {
+      "name": "agentkit",
       "path": "."
+    },
+    {
+      "name": "claude",
+      "path": "/Users/rohitnarayanan/.claude"
+    },
+    {
+      "name": "codex",
+      "path": "/Users/rohitnarayanan/.codex"
     }
   ],
   "settings": {}

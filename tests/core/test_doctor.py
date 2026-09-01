@@ -1,6 +1,6 @@
 from rn_forge.agentkit.agents.claude import ClaudeAdapter
 from rn_forge.agentkit.agents.codex import CodexAdapter
-from rn_forge.agentkit.core.doctor import check_agent, check_environment
+from rn_forge.agentkit.core.doctor import HEALTHY, check_agent, check_environment
 from rn_forge.agentkit.core.io import write_config
 from rn_forge.agentkit.core.manager import apply_adapter
 from rn_forge.agentkit.core.paths import global_root, project_scope_root
@@ -23,7 +23,8 @@ def test_doctor_detects_native_drift_and_orphans(isolated_env) -> None:
 
     assert any(item.status == "drift" for item in results)
     assert any(
-        item.check == "orphan" and "old.toml" in item.message for item in results
+        item.status == "orphan" and item.target and item.target.name == "old.toml"
+        for item in results
     )
 
 
@@ -36,12 +37,16 @@ def test_doctor_reports_hook_dependencies(isolated_env, monkeypatch) -> None:
     results = check_environment("global", repo, global_root())
 
     assert any(
-        item.status == "error" and item.check == "dependency" and "jq" in item.message
+        item.severity == "error"
+        and item.status == "missing"
+        and item.kind == "dependency"
+        and "jq" in item.message
         for item in results
     )
     assert any(
-        item.status == "warning"
-        and item.check == "dependency"
+        item.severity == "warning"
+        and item.status == "missing"
+        and item.kind == "dependency"
         and "gitleaks" in item.message
         for item in results
     )
@@ -57,7 +62,8 @@ def test_doctor_emits_one_result_per_artifact(isolated_env) -> None:
 
     artifact_results = [item for item in results if item.category == "artifacts"]
     assert len(artifact_results) == len(adapter.artifacts("global"))
-    assert all(item.status == "ok" for item in artifact_results)
+    assert all(item.status in HEALTHY for item in artifact_results)
+    assert all(item.source and item.target for item in artifact_results)
 
 
 def test_doctor_reports_missing_artifact_once_without_drift(isolated_env) -> None:
@@ -70,12 +76,12 @@ def test_doctor_reports_missing_artifact_once_without_drift(isolated_env) -> Non
     config_results = [
         item
         for item in results
-        if item.category == "artifacts" and item.message.startswith("config: ")
+        if item.category == "artifacts" and item.target == applied.native_path
     ]
 
     assert len(config_results) == 1
-    assert config_results[0].status == "warning"
-    assert config_results[0].check == "orphan"
+    assert config_results[0].status == "unsynced"
+    assert config_results[0].severity == "warning"
     assert not any(item.status == "drift" for item in results)
 
 
@@ -85,11 +91,11 @@ def test_doctor_categorizes_config_and_environment_checks(isolated_env) -> None:
 
     results = check_agent(adapter, "global", repo, global_root())
 
-    categories = {(item.category, item.check) for item in results}
+    categories = {(item.category, item.kind) for item in results}
     assert ("config", "schema") in categories
     assert ("config", "template") in categories
     assert ("environment", "binary") in categories
-    assert not any(item.check == "dependency" for item in results)
+    assert not any(item.kind == "dependency" for item in results)
 
 
 def test_doctor_detects_stale_copies_that_still_match_each_other(isolated_env) -> None:
@@ -127,7 +133,10 @@ def test_doctor_flags_a_stale_staged_copy_distinctly(isolated_env) -> None:
     rendered.write_text("# stale staging\n")
 
     results = check_agent(adapter, "global", repo, scope_root)
-    assert [item for item in results if item.check == "stale"]
+    staged = [item for item in results if item.status == "stale"]
+    assert staged
+    # The out-of-date file is the staged copy, so that is what `target` names.
+    assert staged[0].target == rendered
 
 
 def test_doctor_does_not_call_an_edited_seed_file_drift(isolated_env) -> None:
@@ -145,7 +154,7 @@ def test_doctor_does_not_call_an_edited_seed_file_drift(isolated_env) -> None:
 
     results = check_agent(adapter, "local", repo, scope_root)
     assert not [item for item in results if item.status == "drift"]
-    assert [item for item in results if item.check == "seed"]
+    assert [item for item in results if item.status == "seeded"]
 
 
 def test_doctor_reports_a_missing_seed_file(isolated_env) -> None:
@@ -162,5 +171,5 @@ def test_doctor_reports_a_missing_seed_file(isolated_env) -> None:
     assert [
         item
         for item in results
-        if item.status == "warning" and "missing" in item.message
+        if item.status == "missing" and item.severity == "warning"
     ]

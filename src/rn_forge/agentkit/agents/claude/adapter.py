@@ -52,6 +52,7 @@ class ClaudeAdapter(AgentAdapter):
                 Artifact(
                     key="hooks/post-edit-format.sh",
                     native_relative=Path("claude/hooks/post-edit-format.sh"),
+                    kind="hook",
                     root="share",
                     source=self._shared_scripts_dir / "post-edit-format.sh",
                     executable=True,
@@ -60,6 +61,7 @@ class ClaudeAdapter(AgentAdapter):
                 Artifact(
                     _CLAUDE_MD,
                     Path(_CLAUDE_MD),
+                    kind="doc",
                     template="CLAUDE.local.md.j2",
                     seed_only=True,
                 ),
@@ -68,6 +70,7 @@ class ClaudeAdapter(AgentAdapter):
             Artifact(
                 "hooks/guard-core.sh",
                 Path("_common/hooks/guard-core.sh"),
+                kind="hook",
                 root="share",
                 source=self._shared_scripts_dir / "guard-core.sh",
             ),
@@ -75,6 +78,7 @@ class ClaudeAdapter(AgentAdapter):
                 Artifact(
                     f"hooks/{name}",
                     Path("claude/hooks") / name,
+                    kind="hook",
                     root="share",
                     source=self._assets_dir / "hooks" / name,
                     executable=True,
@@ -86,28 +90,17 @@ class ClaudeAdapter(AgentAdapter):
                     "session-compact-context.sh",
                 )
             ],
-            Artifact(
-                "hooks/post-write-unwrap-md.sh",
-                Path("claude/hooks/post-write-unwrap-md.sh"),
-                root="share",
-                source=self._shared_scripts_dir / "post-write-unwrap-md.sh",
-                executable=True,
-            ),
-            Artifact(
-                "hooks/unwrap_md.py",
-                Path("claude/hooks/unwrap_md.py"),
-                root="share",
-                source=self._shared_scripts_dir / "unwrap_md.py",
-            ),
             config,
             Artifact(
                 _CLAUDE_MD,
                 Path(".claude/CLAUDE.md"),
+                kind="doc",
                 template="CLAUDE.md.j2",
             ),
             Artifact(
                 "output-styles/concise.md",
                 Path(".claude/output-styles/concise.md"),
+                kind="doc",
                 template="concise.md.j2",
             ),
             *self.skill_artifacts(self._skills_dir),
@@ -129,12 +122,16 @@ class ClaudeAdapter(AgentAdapter):
 
     def defaults(self, scope: Scope) -> dict[str, Any]:
         """Merge schema defaults with the packaged Claude scope defaults."""
-        packaged = read_config(Path(__file__).parent / "defaults" / f"{scope}.json")
+        packaged = read_config(self.defaults_path(scope))
         return (
             ConfigMerger(self.schema())
             .merge(defaults_for(self.schema()), packaged)
             .config
         )
+
+    def defaults_path(self, scope: Scope) -> Path:
+        """Return the packaged Claude scope-defaults JSON file."""
+        return Path(__file__).parent / "defaults" / f"{scope}.json"
 
     def render(self, merged_config: dict[str, Any], *, scope: Scope = "global") -> str:
         """Validate and render merged settings as formatted JSON."""
@@ -161,10 +158,18 @@ class ClaudeAdapter(AgentAdapter):
             return self.render_skill_artifact(artifact)
         if artifact.key in {_CLAUDE_MD, "output-styles/concise.md"}:
             assert artifact.template is not None
-            return RenderEngine(self._shared_instructions_dir).render_template(
+            return RenderEngine(self.template_root(artifact)).render_template(
                 artifact.template, {}
             )
         return super().render_artifact(artifact, merged_config, scope)
+
+    def template_root(self, artifact: Artifact) -> Path:
+        """Resolve skill and shared-instruction templates outside ``template_dir``."""
+        if artifact.key.startswith("skills/"):
+            return self.shared_skills_dir
+        if artifact.key in {_CLAUDE_MD, "output-styles/concise.md"}:
+            return self._shared_instructions_dir
+        return super().template_root(artifact)
 
     def template_errors(self) -> list[str]:
         """Return Claude template compilation errors."""

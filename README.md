@@ -25,9 +25,16 @@ agentkit version
 ```
 
 `RNF_HOME` overrides `~/.rn-forge`. `bootstrap.sh` fetches the latest GitHub
-release's source and runs `install.sh` from it; run `./install.sh` directly
-from a checkout instead if you're developing agentkit itself. The installer
-does not edit shell rc files.
+release's source and runs `install.sh` from it; run `./install.sh` directly from
+a checkout instead if you're developing agentkit itself. The installer does not
+edit shell rc files.
+
+To move to a newer release afterward, run `agentkit upgrade` instead of
+re-running bootstrap by hand — it installs the latest release (or a local
+tarball via `--archive`) without touching your configuration; follow up with
+`agentkit global apply` / `agentkit project update` to apply anything new.
+`agentkit cleanup` removes old installed versions once you no longer need them
+for rollback.
 
 ### Setting up a new machine
 
@@ -36,50 +43,51 @@ does not edit shell rc files.
    need `jq`, and `gitleaks` is optional for prompt-secret scanning. See
    [the dependency table](docs/guides/development.md#external-dependencies)
    for what each one is used for and how to install it.
-2. Install agentkit — no manual clone needed. `bootstrap.sh` downloads the
+
+1. Install agentkit — no manual clone needed. `bootstrap.sh` downloads the
    source tarball for the latest GitHub release and runs the installer from
    it:
 
-   ```bash
-   curl -fsSL https://raw.githubusercontent.com/rn-forge/agentkit/main/scripts/bootstrap.sh | bash
-   ```
+    ```bash
+    curl -fsSL https://raw.githubusercontent.com/rn-forge/agentkit/main/scripts/bootstrap.sh | bash
+    ```
 
-   To install from a checkout instead (e.g. for development), run
-   `./install.sh` directly from the repo root.
+    To install from a checkout instead (e.g. for development), run `./install.sh`
+    directly from the repo root.
 
-3. Add `~/.rn-forge/bin` to your shell's `PATH` (the installer does not edit
-   rc files for you), then confirm the CLI resolves:
+1. Add `~/.rn-forge/bin` to your shell's `PATH` (the installer does not edit rc
+   files for you), then confirm the CLI resolves:
 
-   ```bash
-   export PATH="$HOME/.rn-forge/bin:$PATH"   # add this line to your shell rc
-   agentkit version
-   ```
+    ```bash
+    export PATH="$HOME/.rn-forge/bin:$PATH"   # add this line to your shell rc
+    agentkit version
+    ```
 
-4. Optionally enable shell completions once per shell:
+1. Optionally enable shell completions once per shell:
 
-   ```bash
-   agentkit --install-completion
-   exec zsh   # or restart your shell
-   ```
+    ```bash
+    agentkit --install-completion
+    exec zsh   # or restart your shell
+    ```
 
-5. Apply the global default pack to this machine's agent configs:
+1. Apply the global default pack to this machine's agent configs:
 
-   ```bash
-   agentkit global apply --dry-run   # preview first
-   agentkit global apply
-   ```
+    ```bash
+    agentkit global apply --dry-run   # preview first
+    agentkit global apply
+    ```
 
-6. In any repository you want agentkit to manage:
+1. In any repository you want agentkit to manage:
 
-   ```bash
-   agentkit project init
-   agentkit project update
-   ```
+    ```bash
+    agentkit project init
+    agentkit project update
+    ```
 
 `jq` is **required** — every hook parses its JSON event payload with it.
 `gitleaks` is recommended for prompt-secret scanning. See
-[the development guide](docs/guides/development.md#external-dependencies) for the
-full dependency table.
+[the development guide](docs/guides/development.md#external-dependencies) for
+the full dependency table.
 
 Shell completions (zsh, bash, fish) come from Typer/Click and need no extra
 setup beyond enabling them once per shell:
@@ -119,11 +127,11 @@ Global commands are `apply`, `sync`, `reset`, and `list`. Project commands are
 
 The full documentation is published at
 **[rn-forge.github.io/agentkit](https://rn-forge.github.io/agentkit/)**, built
-from the MkDocs site under [`docs/`](docs/). Build it with `task docs:serve`
-for a live-reloading local preview.
+from the MkDocs site under [`docs/`](docs/). Build it with `task docs:serve` for
+a live-reloading local preview.
 
 | Page | Covers |
-| --- | --- |
+| -- | -- |
 | [Architecture overview](docs/architecture/index.md) | The configuration model, the path model, why copy and never symlink, hook and instruction single-sourcing |
 | [Adapters and artifacts](docs/architecture/adapters.md) | The artifact model and how to write and register a new agent adapter |
 | [Configuring a repository](docs/guides/configuration.md) | Full command surface, the default asset pack, repo instruction seeds, what to commit and what to ignore |

@@ -30,6 +30,16 @@ tasks:
     cmds:
       - uv run --group docs python scripts/check-docs.py .
 
+  lint:markdown:
+    desc: Check formatting in every tracked Markdown file.
+    internal: true
+    cmds:
+      - for: { var: MD_FILES, split: "\n" }
+        cmd: uv run --group docs mdformat --check '{{.ITEM}}'
+    vars:
+      MD_FILES:
+        sh: git ls-files '*.md'
+
   format:python:
     desc: Format src/ and tests/ in place with ruff and docformatter.
     internal: true
@@ -40,6 +50,16 @@ tasks:
       # mode, so a successful reformat must not fail this task.
       - cmd: uv run docformatter --in-place --recursive src tests
         ignore_error: true
+
+  format:markdown:
+    desc: Format every tracked Markdown file with mdformat.
+    internal: true
+    cmds:
+      - for: { var: MD_FILES, split: "\n" }
+        cmd: uv run --group docs mdformat '{{.ITEM}}'
+    vars:
+      MD_FILES:
+        sh: git ls-files '*.md'
 
   typecheck:python:
     desc: Type-check src/ with pyright in strict mode.

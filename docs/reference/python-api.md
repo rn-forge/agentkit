@@ -13,7 +13,8 @@ write.
 ## Command layer
 
 The Typer application and its command groups. These own argument parsing, output
-mode (`--quiet` / `--json`), and user-facing failure messages — no business logic.
+mode (`--quiet` / `--json`), and user-facing failure messages — no business
+logic.
 
 ::: rn_forge.agentkit.cli
 

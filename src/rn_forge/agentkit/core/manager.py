@@ -7,15 +7,22 @@ rendering, and artifact declarations while I/O and state helpers perform writes.
 from __future__ import annotations
 
 import os
+from collections.abc import MutableMapping
 from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any, cast
 
 from ..agents.base import AgentAdapter, Scope
 from .artifacts import Artifact
-from .config import ConfigMerger, MergeResult
+from .config import ConfigMerger, MergeResult, defaults_for
 from .diff import unified_diff
-from .io import atomic_write, read_config, update_config
+from .io import (
+    atomic_write,
+    read_config,
+    read_config_document,
+    update_config,
+    write_config_document,
+)
 from .paths import global_root, project_scope_root
 from .state import StateStore, backup_file, content_hash, file_hash
 
@@ -261,6 +268,161 @@ def reset_adapter(
     return reset_results
 
 
+def strip_native_hooks(
+    adapter: AgentAdapter,
+    scope: Scope,
+    repo_root: Path,
+    *,
+    dry_run: bool = False,
+) -> OperationResult:
+    """Remove agentkit's hook registrations from the primary native config, in place.
+
+    Used by ``agentkit uninstall`` / ``agentkit project remove`` to stop an agent from
+    invoking hook scripts that are about to disappear, without discarding the rest of a
+    native file that stays meaningful on its own — Claude's ``permissions.deny`` and
+    ``outputStyle`` in particular. The native file is parsed as a generic round-trip
+    document (preserving comments and any content agentkit did not write, such as
+    permission grants a user added at runtime) rather than through the adapter's typed
+    schema, and only its top-level ``hooks`` key is dropped, if present. A backup is
+    taken first, same as any other native overwrite.
+    """
+    artifact = adapter.primary_artifact(scope)
+    native = adapter.native_path(scope, repo_root, artifact)
+    root = scope_root(scope, repo_root)
+    if not native.is_file():
+        return OperationResult(
+            adapter.name,
+            artifact.key,
+            "strip-hooks",
+            False,
+            native,
+            native,
+            message="no native config",
+        )
+    document = read_config_document(native)
+    if not isinstance(document, MutableMapping) or "hooks" not in document:
+        return OperationResult(
+            adapter.name,
+            artifact.key,
+            "strip-hooks",
+            False,
+            native,
+            native,
+            message="no hook registrations",
+        )
+    if dry_run:
+        return OperationResult(
+            adapter.name,
+            artifact.key,
+            "strip-hooks",
+            True,
+            native,
+            native,
+            message="dry-run",
+        )
+    backup = backup_file(native, root)
+    del document["hooks"]
+    write_config_document(native, document)
+    return OperationResult(
+        adapter.name,
+        artifact.key,
+        "strip-hooks",
+        True,
+        native,
+        native,
+        backup_path=backup,
+        message="hook registrations removed",
+    )
+
+
+def remove_owned_artifacts(
+    adapter: AgentAdapter,
+    scope: Scope,
+    repo_root: Path,
+    *,
+    dry_run: bool = False,
+) -> list[OperationResult]:
+    """Delete agent-rooted skill and hook-manifest files this adapter wrote.
+
+    Used by ``agentkit uninstall`` / ``agentkit project remove`` to clean up
+    ``~/.claude`` and ``~/.codex`` (or a repo's ``.claude``/``.codex``) beyond the
+    primary config, which :func:`strip_native_hooks` edits instead of deleting. Only
+    skill files and an adapter's :meth:`AgentAdapter.is_native_hook_artifact` files are
+    in scope — never the primary config, a seed-only repo instruction file, or share-
+    rooted hook scripts (removed by deleting the scope root itself). A file whose
+    content no longer matches what agentkit last wrote is left alone and reported as
+    drifted rather than deleted, the same drift-safety ``capture_assets`` relies on.
+    """
+    root = scope_root(scope, repo_root)
+    store = StateStore(root)
+    results: list[OperationResult] = []
+    for artifact in adapter.artifacts(scope):
+        if artifact.root != "agent" or artifact.seed_only or artifact.key == "config":
+            continue
+        if artifact.kind != "skill" and not adapter.is_native_hook_artifact(artifact):
+            continue
+        native = adapter.native_path(scope, repo_root, artifact)
+        if not native.is_file():
+            continue
+        prior = store.get(native)
+        current_hash = file_hash(native)
+        if prior is not None and prior.get("hash") != current_hash:
+            results.append(
+                OperationResult(
+                    adapter.name,
+                    artifact.key,
+                    "remove",
+                    False,
+                    native,
+                    native,
+                    message="modified since last apply; left in place",
+                )
+            )
+            continue
+        if dry_run:
+            results.append(
+                OperationResult(
+                    adapter.name,
+                    artifact.key,
+                    "remove",
+                    True,
+                    native,
+                    native,
+                    message="dry-run",
+                )
+            )
+            continue
+        native.unlink()
+        store.remove(native)
+        boundary = Path.home() if scope == "global" else Path(repo_root)
+        _prune_empty_dirs(native.parent, boundary.expanduser().resolve())
+        results.append(
+            OperationResult(
+                adapter.name,
+                artifact.key,
+                "remove",
+                True,
+                native,
+                native,
+                message="removed",
+            )
+        )
+    return results
+
+
+def _prune_empty_dirs(start: Path, boundary: Path) -> None:
+    """Remove now-empty directories a deleted artifact leaves behind.
+
+    Walks upward from a just-deleted file's parent, stopping at the first directory that
+    still holds something (a sibling skill, a native config file) or at the agent or
+    repository root itself, which is never removed.
+    """
+    current = start.resolve()
+    while current != boundary and current.is_dir() and not any(current.iterdir()):
+        current.rmdir()
+        current = current.parent
+
+
 def init_adapter(
     adapter: AgentAdapter,
     repo_root: Path,
@@ -450,6 +612,101 @@ def capture_assets(
             )
         )
     return results
+
+
+def capture_defaults(
+    adapter: AgentAdapter,
+    scope: Scope,
+    repo_root: Path,
+) -> OperationResult:
+    """Promote a scope's managed overrides into the packaged scope defaults.
+
+    Structural counterpart to :func:`capture_assets` for the primary config
+    artifact: where ``capture_adapter`` folds native drift into the scope's
+    managed ``config.toml``, this folds that managed override into the packaged
+    defaults file :meth:`AgentAdapter.defaults` reads, so a fresh install picks
+    it up as the new default. Only the values already captured to this scope's
+    own managed source are considered — a local scope's promotion never pulls in
+    the global layer that also feeds its resolved config.
+
+    Only does something useful running from an editable checkout of this repo:
+    an unwritable packaged defaults file (an installed, non-editable package) is
+    reported instead of raising, the same as ``capture_assets``. An adapter with
+    no packaged defaults file for this scope has nothing to promote into, and
+    reports that instead of failing.
+
+    Raises:
+        ValueError: The managed override contains an unsupported removal.
+    """
+    target = adapter.defaults_path(scope)
+    source = managed_config_path(adapter, scope_root(scope, repo_root))
+    if target is None:
+        return OperationResult(
+            adapter.name,
+            "config",
+            "capture-defaults",
+            False,
+            source,
+            source,
+            message="no packaged defaults for this scope",
+        )
+    managed = read_config(source, missing_ok=True)
+    if not managed:
+        return OperationResult(
+            adapter.name,
+            "config",
+            "capture-defaults",
+            False,
+            source,
+            target,
+            message="no managed overrides",
+        )
+
+    schema = adapter.schema()
+    schema_defaults = defaults_for(schema)
+    merger = ConfigMerger(schema)
+    packaged = read_config(target, missing_ok=True)
+    expected = merger.merge(schema_defaults, packaged).config
+    actual = merger.merge(schema_defaults, packaged, managed).config
+    updates, unsupported = _capture_updates(
+        expected, actual, packaged, merger.append_paths
+    )
+    if unsupported:
+        paths = ", ".join(sorted(unsupported))
+        raise ValueError(
+            "Cannot promote removals or destructive append-list edits: " + paths
+        )
+    if not updates:
+        return OperationResult(
+            adapter.name,
+            "config",
+            "capture-defaults",
+            False,
+            source,
+            target,
+            message="unchanged",
+        )
+    try:
+        update_config(target, updates)
+    except OSError as exc:
+        return OperationResult(
+            adapter.name,
+            "config",
+            "capture-defaults",
+            False,
+            source,
+            target,
+            message=f"unwritable: {exc}",
+        )
+    return OperationResult(
+        adapter.name,
+        "config",
+        "capture-defaults",
+        True,
+        source,
+        target,
+        message="captured",
+    )
 
 
 def _capture_updates(

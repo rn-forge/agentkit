@@ -39,17 +39,19 @@ tasks:
       - task: docs:build
 
   lint:
-    desc: Every lint — Python, task layout, CI entrypoints, and docs links.
+    desc: Every lint — Python, task layout, CI entrypoints, docs, and Markdown.
     cmds:
       - task: quality:lint:python
       - task: quality:lint:task-layout
       - task: quality:lint:ci-entrypoint
       - task: quality:lint:docs
+      - task: quality:lint:markdown
 
   format:
-    desc: Format Python code in place.
+    desc: Format Python code and Markdown prose in place.
     cmds:
       - task: quality:format:python
+      - task: quality:format:markdown
 
   typecheck:
     desc: Static type-check the package in pyright strict mode.

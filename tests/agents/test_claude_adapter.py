@@ -25,19 +25,17 @@ def test_claude_artifacts_and_scope_defaults() -> None:
     # point at by path, so a written config never lands pointing at a script
     # that does not exist yet.
     global_keys = [artifact.key for artifact in adapter.artifacts("global")]
-    assert global_keys[:10] == [
+    assert global_keys[:8] == [
         "hooks/guard-core.sh",
         "hooks/pre-bash-guard.sh",
         "hooks/user-prompt-secret-guard.sh",
         "hooks/pre-write-protect.sh",
         "hooks/session-compact-context.sh",
-        "hooks/post-write-unwrap-md.sh",
-        "hooks/unwrap_md.py",
         "config",
         "CLAUDE.md",
         "output-styles/concise.md",
     ]
-    skill_keys = global_keys[10:]
+    skill_keys = global_keys[8:]
     assert skill_keys
     assert all(key.startswith("skills/") for key in skill_keys)
     assert "skills/go-task-setup/SKILL.md" in skill_keys
@@ -65,6 +63,7 @@ def test_claude_artifacts_and_scope_defaults() -> None:
     assert "Bash(gh pr create:*)" in local_permissions["ask"]
     global_defaults = adapter.defaults("global")
     assert "PostCompact" not in global_defaults["hooks"]
+    assert "PostToolUse" not in global_defaults["hooks"]
     assert {
         "Read(**/.kube/config)",
         "Read(**/*.p12)",

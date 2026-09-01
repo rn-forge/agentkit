@@ -16,15 +16,20 @@ brew install --cask openclaw
 brew install --cask tailscale-app
 ```
 
-Launch both apps. In OpenClaw, select **This Mac** and let the app install its matching CLI and gateway runtime. In Tailscale, sign in with Apple and enable its CLI integration if prompted.
+Launch both apps. In OpenClaw, select **This Mac** and let the app install its
+matching CLI and gateway runtime. In Tailscale, sign in with Apple and enable
+its CLI integration if prompted.
 
 ### iPhone
 
-Install both **OpenClaw** and **Tailscale** from the App Store. Open Tailscale, sign in with the same Apple account used on the Mac, allow the VPN configuration, and connect.
+Install both **OpenClaw** and **Tailscale** from the App Store. Open Tailscale,
+sign in with the same Apple account used on the Mac, allow the VPN
+configuration, and connect.
 
 ## Fix the OpenClaw CLI path
 
-The app installed the CLI under `~/.openclaw/bin`, but that directory was not initially on the shell `PATH`.
+The app installed the CLI under `~/.openclaw/bin`, but that directory was not
+initially on the shell `PATH`.
 
 Verify the CLI exists:
 
@@ -52,7 +57,9 @@ OpenClaw itself did not require a separate account.
 
 ## Configure the gateway and Tailscale Serve
 
-Keep command execution approval-gated, bind the OpenClaw gateway to the Mac's loopback interface, and expose it only inside the tailnet through Tailscale Serve:
+Keep command execution approval-gated, bind the OpenClaw gateway to the Mac's
+loopback interface, and expose it only inside the tailnet through Tailscale
+Serve:
 
 ```bash
 openclaw config set tools.exec.mode ask
@@ -69,7 +76,8 @@ Gateway: 127.0.0.1:18789
 Tailscale mode: serve
 ```
 
-If OpenClaw reports that `tailscale serve` failed, give the current macOS user permission to manage the Tailscale configuration:
+If OpenClaw reports that `tailscale serve` failed, give the current macOS user
+permission to manage the Tailscale configuration:
 
 ```bash
 sudo tailscale set --operator="$USER"
@@ -90,16 +98,20 @@ openclaw gateway status
 tailscale serve status
 ```
 
-`tailscale serve status` should show a tailnet-only HTTPS address proxying to the local gateway, for example:
+`tailscale serve status` should show a tailnet-only HTTPS address proxying to
+the local gateway, for example:
 
 ```text
 https://rohitmacmini.taildc2a5d.ts.net
 └── proxy http://127.0.0.1:18789
 ```
 
-Open that HTTPS address in Safari on the iPhone. It initially failed because the iPhone was not logged in to Tailscale. Signing in to the Tailscale app on the iPhone with the same account/tailnet fixed access.
+Open that HTTPS address in Safari on the iPhone. It initially failed because the
+iPhone was not logged in to Tailscale. Signing in to the Tailscale app on the
+iPhone with the same account/tailnet fixed access.
 
-Once Safari can reach the address, leave Tailscale connected and use the OpenClaw iPhone app to connect or scan the gateway pairing code.
+Once Safari can reach the address, leave Tailscale connected and use the
+OpenClaw iPhone app to connect or scan the gateway pairing code.
 
 ## Test the gateway
 
@@ -115,7 +127,8 @@ The response was exactly:
 openclaw-gateway-ok
 ```
 
-This confirmed that the iPhone, Tailscale Serve, OpenClaw gateway, and OpenAI model connection were working.
+This confirmed that the iPhone, Tailscale Serve, OpenClaw gateway, and OpenAI
+model connection were working.
 
 ## Configure guarded Mac command execution
 
@@ -128,7 +141,8 @@ openclaw config set tools.exec.mode ask
 openclaw gateway restart
 ```
 
-Replace `<MAC-NODE-ID-OR-NAME>` with the Mac node identifier reported by OpenClaw.
+Replace `<MAC-NODE-ID-OR-NAME>` with the Mac node identifier reported by
+OpenClaw.
 
 ## Remote command tests
 
@@ -141,7 +155,8 @@ Run /usr/bin/uname -n on my Mac and return only stdout.
 Do not execute any other command.
 ```
 
-OpenClaw created an approval request for `/usr/bin/uname -n`, but the final result was:
+OpenClaw created an approval request for `/usr/bin/uname -n`, but the final
+result was:
 
 ```text
 Exec denied (..., user-denied): /usr/bin/uname -n
@@ -149,18 +164,23 @@ Exec denied (..., user-denied): /usr/bin/uname -n
 
 The command did not run and produced no new output.
 
-The cause was later found in the native OpenClaw Mac app: **Command access** was set to **Deny**. The Mac node's local approval policy overrides or narrows the gateway's requested execution policy, so `tools.exec.mode ask` alone was not sufficient.
+The cause was later found in the native OpenClaw Mac app: **Command access** was
+set to **Deny**. The Mac node's local approval policy overrides or narrows the
+gateway's requested execution policy, so `tools.exec.mode ask` alone was not
+sufficient.
 
 ### Test 2: execution-host mismatch
 
-The same prompt was tested in a new chat. The execution tool requested `host: "auto"`, while OpenClaw was configured to require the Mac node:
+The same prompt was tested in a new chat. The execution tool requested
+`host: "auto"`, while OpenClaw was configured to require the Mac node:
 
 ```text
 exec host not allowed (requested auto; configured host is node;
 set tools.exec.host=auto to allow this override).
 ```
 
-The command again did not run. This test exposed a mismatch between the requested execution host (`auto`) and the configured host (`node`).
+The command again did not run. This test exposed a mismatch between the
+requested execution host (`auto`) and the configured host (`node`).
 
 ## Fix approval-gated command execution
 
@@ -180,7 +200,8 @@ Prompt behavior: Ask on Allowlist Miss
 Fallback when unreachable: Deny
 ```
 
-Change only **Command access** from **Deny** to **Allowlist**. Keep the other settings unchanged:
+Change only **Command access** from **Deny** to **Allowlist**. Keep the other
+settings unchanged:
 
 ```text
 Command access: Allowlist
@@ -198,7 +219,9 @@ Fallback: deny
 Allowlist entries: 0
 ```
 
-With no trusted commands in the allowlist, each new command requires an approval prompt. If the approval UI is unavailable or the request expires, the command is denied.
+With no trusted commands in the allowlist, each new command requires an approval
+prompt. If the approval UI is unavailable or the request expires, the command is
+denied.
 
 ## Successful remote command test
 
@@ -208,8 +231,14 @@ OpenClaw displayed a native approval prompt for:
 /bin/sh -lc "/bin/echo openclaw-remote-ok"
 ```
 
-After selecting **Allow Once**, the command ran successfully. This confirmed approval-gated remote command execution on the Mac without permanently trusting the command.
+After selecting **Allow Once**, the command ran successfully. This confirmed
+approval-gated remote command execution on the Mac without permanently trusting
+the command.
 
 ## Current status
 
-The OpenClaw gateway, OpenAI model connection, Tailscale Serve connection, and iPhone access are working. The simple gateway prompt passed. Approval-gated remote Mac command execution also passed after correcting the Mac app's native Exec Approvals policy from **Deny** to **Allowlist** and approving the test command with **Allow Once**.
+The OpenClaw gateway, OpenAI model connection, Tailscale Serve connection, and
+iPhone access are working. The simple gateway prompt passed. Approval-gated
+remote Mac command execution also passed after correcting the Mac app's native
+Exec Approvals policy from **Deny** to **Allowlist** and approving the test
+command with **Allow Once**.

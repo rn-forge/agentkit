@@ -6,6 +6,7 @@ delegate artifact writes to the core manager.
 
 from __future__ import annotations
 
+import shutil
 from pathlib import Path
 from typing import Any
 
@@ -22,7 +23,9 @@ from ..core.manager import (
     init_adapter,
     managed_config_path,
     project_root,
+    remove_owned_artifacts,
     resolve_config,
+    strip_native_hooks,
 )
 from ..core.paths import project_scope_root
 from ..core.state import content_hash
@@ -211,3 +214,110 @@ def status_command(
             str(row["native"]),
         )
     console.print(table)
+
+
+@app.command("remove")
+def remove_command(
+    ctx: typer.Context,
+    agent: list[str] | None = typer.Option(None, "--agent", "-a", help=AGENT_HELP),
+    repo: Path = typer.Option(Path.cwd(), "--repo", help=REPO_HELP),
+    yes: bool = typer.Option(False, "--yes", "-y", help="Skip confirmation prompts."),
+    dry_run: bool = typer.Option(False, "--dry-run", help=DRY_RUN_HELP),
+    quiet: bool = typer.Option(False, "--quiet", "-q", help=QUIET_HELP),
+    json_output: bool = typer.Option(False, "--json", help=JSON_HELP),
+) -> None:
+    """Undo `project init`/`update`: strip hook wiring, then this repo's working data.
+
+    The repository-local counterpart to `agentkit uninstall`: removes agentkit's hook
+    registrations from each adapter's repository-local native config (Codex's
+    `.codex/hooks.json`; Claude's `.claude/settings.local.json` keeps its `permissions`
+    block, only losing the `hooks` key) without touching anything else, then deletes
+    repository-local hook-manifest files agentkit wrote. Seed files (`CLAUDE.md`,
+    `AGENTS.md`) are never touched — they are repository-owned, not agentkit's to
+    remove.
+
+    `<repo>/.rn-forge/agentkit/` (managed sources, rendered state, and any repository-
+    local backups) and the `.gitignore` block `init` added are asked about separately,
+    since removing the working-data root is the one step here nothing can undo.
+    """
+    command_options(ctx, quiet=quiet, json_output=json_output)
+    root = project_root(repo)
+    data_root = project_scope_root(root)
+    adapters = selected(agent)
+
+    if not dry_run and not yes:
+        names = ", ".join(item.name for item in adapters)
+        if not typer.confirm(
+            f"Remove agentkit's hook registrations and owned files for {names} in "
+            f"{root}?"
+        ):
+            raise typer.Abort()
+
+    results: list[OperationResult] = []
+    with command_boundary():
+        for adapter in adapters:
+            results.append(strip_native_hooks(adapter, "local", root, dry_run=dry_run))
+            results.extend(
+                remove_owned_artifacts(adapter, "local", root, dry_run=dry_run)
+            )
+
+    if not data_root.is_dir():
+        remove_data, data_message = False, "already absent"
+    elif dry_run:
+        remove_data, data_message = True, "dry-run"
+    elif yes or typer.confirm(
+        f"Also remove {data_root}? This deletes the repository's managed sources, "
+        "rendered state, and any repository-local backups — irreversible."
+    ):
+        remove_data, data_message = True, "removed"
+        shutil.rmtree(data_root)
+    else:
+        remove_data, data_message = False, "kept — not confirmed"
+    results.append(
+        OperationResult(
+            "project",
+            "working-data",
+            "remove",
+            remove_data,
+            data_root,
+            data_root,
+            message=data_message,
+        )
+    )
+    if remove_data:
+        results.append(_remove_gitignore_block(root, dry_run=dry_run))
+
+    emit_operations(ctx, results)
+
+
+def _remove_gitignore_block(root: Path, *, dry_run: bool) -> OperationResult:
+    """Remove the derived-data ignore block `init` added, if one is present."""
+    path = root / ".gitignore"
+    existing = path.read_text(encoding="utf-8") if path.exists() else ""
+    start = existing.find(_GITIGNORE_START)
+    end = existing.find(_GITIGNORE_END)
+    if start == -1 or end <= start:
+        return OperationResult(
+            "project",
+            ".gitignore",
+            "remove",
+            False,
+            path,
+            path,
+            message="no agentkit block found",
+        )
+    content = existing[:start] + existing[end + len(_GITIGNORE_END) :]
+    while "\n\n\n" in content:
+        content = content.replace("\n\n\n", "\n\n")
+    changed = content != existing
+    if changed and not dry_run:
+        atomic_write(path, content)
+    return OperationResult(
+        "project",
+        ".gitignore",
+        "remove",
+        changed,
+        path,
+        path,
+        message="dry-run" if dry_run else "removed",
+    )

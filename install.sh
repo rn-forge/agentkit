@@ -15,8 +15,27 @@ else
   _agentkit_script_path="${BASH_SOURCE[0]:-$0}"
 fi
 
+# Serialize concurrent installs/upgrades via a portable mkdir-based lock (no
+# flock assumption). Released by a trap: this function always runs in a
+# standalone or sourced *top-level* shell, never inside a caller's own trap.
+_agentkit_acquire_install_lock() {
+  local lock_dir="$1" waited=0
+  while ! mkdir "${lock_dir}" 2>/dev/null; do
+    if [ "${waited}" -eq 0 ]; then
+      echo "install.sh: waiting for install lock ${lock_dir} (held by another install) ..."
+    fi
+    if [ "${waited}" -ge 30 ]; then
+      echo "install.sh: could not acquire install lock ${lock_dir}" >&2
+      return 1
+    fi
+    sleep 1
+    waited=$((waited + 1))
+  done
+  trap 'rm -rf "${lock_dir}"' EXIT
+}
+
 agentkit_install() {
-  local script_path repo_root version rnf_home product_home target
+  local script_path repo_root version rnf_home product_home target scratch
   local current_resolved target_resolved
 
   script_path="${_agentkit_script_path}"
@@ -47,12 +66,26 @@ agentkit_install() {
 
   echo "Installing agentkit v${version} into ${target} ..."
   mkdir -p "${product_home}" || return 1
+  _agentkit_acquire_install_lock "${product_home}/.install.lock" || return 1
+
+  # `target` is this version's own directory, distinct from whatever
+  # `current` points to today, so nothing observes it mid-build; the lock
+  # only needs to prevent two installs racing on the same target. What must
+  # be atomic is the `current` flip itself: build a new symlink under a
+  # private name and rename it over `current` in one syscall, rather than
+  # `ln -sfn`'s remove-then-recreate.
   (
     cd "${repo_root}" || exit 1
     UV_PROJECT_ENVIRONMENT="${target}" uv sync --frozen --no-dev --no-editable
   ) || return 1
 
-  ln -sfn "v${version}" "${product_home}/current" || return 1
+  scratch="${product_home}/.current.tmp.$$"
+  rm -f "${scratch}"
+  ln -s "v${version}" "${scratch}" || return 1
+  mv -f "${scratch}" "${product_home}/current" || return 1
+  rm -rf "${product_home}/.install.lock"
+  trap - EXIT
+
   mkdir -p "${rnf_home}/bin" || return 1
   ln -sfn "../agentkit/current/bin/agentkit" "${rnf_home}/bin/agentkit" || return 1
 

@@ -27,3 +27,15 @@ def project_scope_root(repo_root: Path) -> Path:
         repo_root: Repository containing local managed data.
     """
     return Path(repo_root) / ".rn-forge" / "agentkit"
+
+
+def package_root() -> Path:
+    """Return the installed ``rn_forge.agentkit`` package directory.
+
+    Every packaged asset, template, and skill an adapter names as an artifact's source
+    lives beneath this. It follows the *running* interpreter's import path, so it is a
+    site-packages directory for a normal install and the repo ``src/`` tree for an
+    editable one — which is exactly the distinction ``doctor`` reports when a target
+    drifts from its source.
+    """
+    return Path(__file__).parents[1]

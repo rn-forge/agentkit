@@ -28,18 +28,16 @@ def test_codex_artifacts_and_scope_defaults() -> None:
     # path, so a written `hooks.json` never lands pointing at a script that
     # does not exist yet.
     global_keys = [artifact.key for artifact in adapter.artifacts("global")]
-    assert global_keys[:9] == [
+    assert global_keys[:7] == [
         "hooks/guard-core.sh",
         "hooks/pre-bash-guard.sh",
         "hooks/user-prompt-secret-guard.sh",
         "hooks/pre-write-protect.sh",
-        "hooks/post-write-unwrap-md.sh",
-        "hooks/unwrap_md.py",
         "hooks.json",
         "config",
         "AGENTS.md",
     ]
-    assert all(key.startswith("skills/") for key in global_keys[9:])
+    assert all(key.startswith("skills/") for key in global_keys[7:])
     assert "skills/sonar-cleanup/SKILL.md" in global_keys
     assert [artifact.key for artifact in adapter.artifacts("local")] == [
         "hooks/post-edit-format.sh",
@@ -81,6 +79,7 @@ def test_codex_hook_registrations_cover_write_and_format_events() -> None:
         "Bash",
         "Edit|Write",
     }
+    assert "PostToolUse" not in global_hooks
     assert local_hooks["PostToolUse"][0]["matcher"] == "Edit|Write"
     assert all(
         hook["statusMessage"]

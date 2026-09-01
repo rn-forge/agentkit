@@ -1,9 +1,9 @@
 # Safety model
 
 What agentkit's guards and write paths actually promise — and, just as
-importantly, what they do not. Several of these are deliberate trade-offs
-rather than gaps, and they are recorded here so a future reviewer does not have
-to rediscover the reasoning.
+importantly, what they do not. Several of these are deliberate trade-offs rather
+than gaps, and they are recorded here so a future reviewer does not have to
+rediscover the reasoning.
 
 ## The command and write guards are a speed bump, not a boundary
 
@@ -23,9 +23,8 @@ reaches for by mistake:
 - executable paths and wrappers — `/bin/rm`, `command rm`;
 - Git global options before the subcommand — `git -C . push --force`.
 
-Treat a block as "you probably did not mean that", not as "this was
-prevented". The regression matrix in `tests/hooks/test_guard_scripts.py` is the
-contract.
+Treat a block as "you probably did not mean that", not as "this was prevented".
+The regression matrix in `tests/hooks/test_guard_scripts.py` is the contract.
 
 ## Guards fail closed on their inputs
 
@@ -35,8 +34,8 @@ it must not allow it.
 
 `guard_event_field` rejects a payload that is not valid JSON, and rejects a
 field that is present with a non-string type. On either, the command and write
-guards block. An absent or null field is a well-formed event, not an error —
-"no path in this event" is allowed.
+guards block. An absent or null field is a well-formed event, not an error — "no
+path in this event" is allowed.
 
 The prompt-secret guard is the deliberate exception: it warns and continues. A
 malformed prompt event enables no destructive action, so blocking the user's
@@ -60,9 +59,9 @@ of a plain `diff`.
 ## Install and release provenance
 
 `bootstrap.sh` is fetched from `main` and resolves the newest tagged release,
-then downloads and runs that tag's `install.sh`. The payload is a tagged
-archive rather than a moving branch, but nothing is verified beyond HTTPS:
-there is no digest check, signature, or attestation.
+then downloads and runs that tag's `install.sh`. The payload is a tagged archive
+rather than a moving branch, but nothing is verified beyond HTTPS: there is no
+digest check, signature, or attestation.
 
 That is a real limitation, and HTTPS does not protect against a compromised
 repository or a replaced release asset. Installing from a checkout
@@ -85,6 +84,6 @@ written once per operation rather than per artifact, and read-modify-write
 cycles take a per-scope lock, so a concurrent invocation cannot interleave
 entries.
 
-A full preflight-then-commit executor with rollback would be stronger. It is
-not implemented, because the backup-and-retry path has proven sufficient for a
-tool whose writes are all regenerable from source.
+A full preflight-then-commit executor with rollback would be stronger. It is not
+implemented, because the backup-and-retry path has proven sufficient for a tool
+whose writes are all regenerable from source.

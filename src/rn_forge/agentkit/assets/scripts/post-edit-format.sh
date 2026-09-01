@@ -20,6 +20,22 @@ run_formatter() {
   return 0
 }
 
+run_markdown_formatter() {
+  local file_dir repo_root formatter
+  file_dir=${FILE%/*}
+  [[ "$file_dir" == "$FILE" ]] && file_dir=.
+  repo_root=$(git -C "$file_dir" rev-parse --show-toplevel 2>/dev/null || true)
+  [[ -n "$repo_root" && -f "$repo_root/.mdformat.toml" ]] || return 0
+  if [[ -n "$repo_root" && -x "$repo_root/.venv/bin/mdformat" ]]; then
+    formatter="$repo_root/.venv/bin/mdformat"
+  elif command -v mdformat >/dev/null 2>&1; then
+    formatter=mdformat
+  else
+    return 0
+  fi
+  run_formatter mdformat "$formatter" "$FILE"
+}
+
 case "$FILE" in
 *.py)
   command -v ruff >/dev/null 2>&1 && run_formatter ruff ruff format "$FILE"
@@ -28,7 +44,7 @@ case "$FILE" in
   command -v npx >/dev/null 2>&1 && run_formatter prettier npx --no-install prettier --write "$FILE"
   ;;
 *.md)
-  command -v npx >/dev/null 2>&1 && run_formatter markdownlint-cli2 npx --no-install markdownlint-cli2 --fix "$FILE"
+  run_markdown_formatter
   ;;
 *.java)
   command -v google-java-format >/dev/null 2>&1 && run_formatter google-java-format google-java-format --replace "$FILE"

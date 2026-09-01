@@ -11,10 +11,13 @@ from rn_forge.agentkit.core.manager import (
     artifact_drifted,
     capture_adapter,
     capture_assets,
+    capture_defaults,
     init_adapter,
     managed_config_path,
+    remove_owned_artifacts,
     reset_adapter,
     resolve_config,
+    strip_native_hooks,
     sync_adapter,
 )
 from rn_forge.agentkit.core.paths import global_root, project_scope_root
@@ -229,6 +232,64 @@ def test_capture_assets_reports_unwritable_source_without_raising(
     assert "unwritable" in results[0].message
 
 
+def test_capture_defaults_promotes_managed_override_into_packaged_defaults(
+    isolated_env, tmp_path
+) -> None:
+    _, _, repo = isolated_env
+    adapter = CodexAdapter()
+    target = tmp_path / "global.toml"
+    target.write_text('personality = "pragmatic"\n')
+    adapter.defaults_path = lambda scope: target  # type: ignore[method-assign]
+    write_config(global_root() / "codex" / "config.toml", {"model": "gpt-5"})
+
+    result = capture_defaults(adapter, "global", repo)
+
+    assert result.changed is True
+    assert result.message == "captured"
+    assert read_config(target)["model"] == "gpt-5"
+    assert read_config(target)["personality"] == "pragmatic"
+
+    unchanged = capture_defaults(adapter, "global", repo)
+    assert unchanged.changed is False
+    assert unchanged.message == "unchanged"
+
+
+def test_capture_defaults_reports_no_managed_overrides_without_writing(
+    isolated_env, tmp_path
+) -> None:
+    _, _, repo = isolated_env
+    adapter = CodexAdapter()
+    target = tmp_path / "global.toml"
+    target.write_text('personality = "pragmatic"\n')
+    adapter.defaults_path = lambda scope: target  # type: ignore[method-assign]
+
+    result = capture_defaults(adapter, "global", repo)
+
+    assert result.changed is False
+    assert result.message == "no managed overrides"
+    assert target.read_text() == 'personality = "pragmatic"\n'
+
+
+def test_capture_defaults_reports_unwritable_target_without_raising(
+    isolated_env, tmp_path
+) -> None:
+    _, _, repo = isolated_env
+    adapter = CodexAdapter()
+    missing_dir = tmp_path / "no-such-dir"
+    target = missing_dir / "global.toml"
+    adapter.defaults_path = lambda scope: target  # type: ignore[method-assign]
+    write_config(global_root() / "codex" / "config.toml", {"model": "gpt-5"})
+    missing_dir.mkdir()
+    missing_dir.chmod(0o500)
+    try:
+        result = capture_defaults(adapter, "global", repo)
+    finally:
+        missing_dir.chmod(0o700)
+
+    assert result.changed is False
+    assert "unwritable" in result.message
+
+
 def test_seed_only_artifact_is_written_once_then_left_alone(isolated_env) -> None:
     _, _, repo = isolated_env
     adapter = CodexAdapter()
@@ -365,3 +426,127 @@ def test_reset_backs_up_the_hand_edited_managed_source(isolated_env) -> None:
     recovered = backups[0].read_text()
     assert "# my note" in recovered
     assert 'model = "custom"' in recovered
+
+
+def test_strip_native_hooks_removes_hooks_key_but_keeps_the_rest(isolated_env) -> None:
+    _, rnf, repo = isolated_env
+    adapter = ClaudeAdapter()
+    apply_adapter(adapter, "global", repo)
+    native = adapter.global_native_path()
+    assert "hooks" in json.loads(native.read_text())
+
+    result = strip_native_hooks(adapter, "global", repo)
+
+    assert result.changed is True
+    assert result.message == "hook registrations removed"
+    parsed = json.loads(native.read_text())
+    assert "hooks" not in parsed
+    assert parsed["permissions"]["deny"]
+    assert result.backup_path is not None
+    assert "hooks" in json.loads(result.backup_path.read_text())
+
+
+def test_strip_native_hooks_reports_no_native_config(isolated_env) -> None:
+    _, _, repo = isolated_env
+    adapter = ClaudeAdapter()
+
+    result = strip_native_hooks(adapter, "global", repo)
+
+    assert result.changed is False
+    assert result.message == "no native config"
+
+
+def test_strip_native_hooks_is_a_noop_for_codex_config(isolated_env) -> None:
+    """Codex's hooks live entirely in `hooks.json`, not `config.toml`."""
+    _, _, repo = isolated_env
+    adapter = CodexAdapter()
+    apply_adapter(adapter, "global", repo)
+
+    result = strip_native_hooks(adapter, "global", repo)
+
+    assert result.changed is False
+    assert result.message == "no hook registrations"
+
+
+def test_strip_native_hooks_dry_run_writes_nothing(isolated_env) -> None:
+    _, _, repo = isolated_env
+    adapter = ClaudeAdapter()
+    apply_adapter(adapter, "global", repo)
+    native = adapter.global_native_path()
+    before = native.read_text()
+
+    result = strip_native_hooks(adapter, "global", repo, dry_run=True)
+
+    assert result.changed is True
+    assert result.message == "dry-run"
+    assert native.read_text() == before
+
+
+def test_remove_owned_artifacts_deletes_codex_hooks_manifest(isolated_env) -> None:
+    _, _, repo = isolated_env
+    adapter = CodexAdapter()
+    apply_adapter(adapter, "global", repo)
+    native = adapter.native_path(
+        "global",
+        repo,
+        next(a for a in adapter.artifacts("global") if a.key == "hooks.json"),
+    )
+    assert native.is_file()
+
+    results = remove_owned_artifacts(adapter, "global", repo)
+
+    assert any(r.artifact == "hooks.json" and r.changed for r in results)
+    assert not native.is_file()
+
+
+def test_remove_owned_artifacts_deletes_claude_skills(isolated_env) -> None:
+    _, _, repo = isolated_env
+    adapter = ClaudeAdapter()
+    apply_adapter(adapter, "global", repo)
+    skill_artifact = next(
+        a for a in adapter.artifacts("global") if a.key.startswith("skills/")
+    )
+    native = adapter.native_path("global", repo, skill_artifact)
+    assert native.is_file()
+
+    results = remove_owned_artifacts(adapter, "global", repo)
+
+    assert not native.is_file()
+    assert all(r.artifact != "config" for r in results)
+
+
+def test_remove_owned_artifacts_leaves_a_hand_edited_file_in_place(
+    isolated_env,
+) -> None:
+    _, _, repo = isolated_env
+    adapter = CodexAdapter()
+    apply_adapter(adapter, "global", repo)
+    native = adapter.native_path(
+        "global",
+        repo,
+        next(a for a in adapter.artifacts("global") if a.key == "hooks.json"),
+    )
+    native.write_text(native.read_text() + "\n")
+
+    results = remove_owned_artifacts(adapter, "global", repo)
+
+    result = next(r for r in results if r.artifact == "hooks.json")
+    assert result.changed is False
+    assert "modified since last apply" in result.message
+    assert native.is_file()
+
+
+def test_remove_owned_artifacts_dry_run_deletes_nothing(isolated_env) -> None:
+    _, _, repo = isolated_env
+    adapter = CodexAdapter()
+    apply_adapter(adapter, "global", repo)
+    native = adapter.native_path(
+        "global",
+        repo,
+        next(a for a in adapter.artifacts("global") if a.key == "hooks.json"),
+    )
+
+    results = remove_owned_artifacts(adapter, "global", repo, dry_run=True)
+
+    assert any(r.artifact == "hooks.json" and r.message == "dry-run" for r in results)
+    assert native.is_file()

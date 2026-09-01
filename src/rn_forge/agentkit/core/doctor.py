@@ -1,13 +1,26 @@
 """Inspect schemas, artifacts, templates, state, paths, and optional binaries.
 
 The shared doctor command invokes :func:`check_agent` for each selected adapter plus
-:func:`check_environment` once per scope, and reports warnings, errors, and native drift
-without mutating files.
+:func:`check_environment` once per scope, and reports every finding without mutating
+files.
 
-Every result carries a ``category`` so callers can group the report by concern
-(``config``, ``artifacts``, ``environment``, ``state``) while ``check`` stays the
-specific outcome. Each artifact contributes exactly one result — its worst finding —
-rather than separate existence, path, and drift rows.
+Each result separates three independent axes so no column repeats another:
+
+``status``
+    What is *true* of the thing checked — ``drift``, ``missing``, ``stale``, and so
+    on. Naming the outcome here is what lets an artifact row drop a prose message
+    entirely: ``source`` and ``target`` say which two files were compared, and
+    ``status`` says how they differ.
+``severity``
+    How much that outcome matters, and the only thing exit codes read.
+``kind``
+    What sort of thing was checked — an artifact's :class:`~.artifacts.ArtifactKind`
+    for managed files, or the check's own subject (``schema``, ``binary``,
+    ``dependency``, …) for everything else.
+
+``category`` remains as a grouping axis for callers that want it. Each artifact
+contributes exactly one result — its worst finding — rather than separate existence,
+path, and drift rows.
 """
 
 from __future__ import annotations
@@ -20,27 +33,90 @@ from typing import Literal
 
 from ..agents.base import AgentAdapter
 from ..agents.registry import registry
+from .artifacts import Artifact, ArtifactKind
 from .manager import resolve_config
 from .state import StateStore, content_hash, file_hash
 
-Status = Literal["ok", "warning", "error", "drift"]
+Status = Literal[
+    "ok",
+    "seeded",
+    "drift",
+    "stale",
+    "missing",
+    "unsynced",
+    "orphan",
+    "invalid",
+    "unwritable",
+]
+"""The outcome of one check, independent of how much it matters.
+
+``ok`` matches expectation; ``seeded`` is a user-owned file that exists and is
+deliberately not compared; ``drift`` is a target whose content differs from its source;
+``stale`` is a staged copy left behind by a source change; ``missing`` is an absent
+target or unavailable dependency; ``unsynced`` is a rendered artifact that was never
+copied to its target; ``orphan`` is a file agentkit no longer expects; ``invalid`` is
+content that failed to validate or load; ``unwritable`` is a target whose parent
+directory blocks every repair.
+"""
+
+Severity = Literal["info", "warning", "error"]
+"""How much a status matters.
+
+``error`` fails ``doctor``; nothing else does.
+"""
+
+Kind = Literal[
+    ArtifactKind,
+    "artifact",
+    "schema",
+    "template",
+    "binary",
+    "dependency",
+    "state",
+    "plugin",
+]
+"""What was checked: an artifact's own kind, or the subject of a scope-level check."""
+
 Category = Literal["config", "artifacts", "environment", "state"]
 
 CATEGORY_ORDER: tuple[Category, ...] = ("config", "artifacts", "environment", "state")
-"""Display order for report sections."""
+"""Display order for grouped output."""
 
-STATUS_ORDER: dict[Status, int] = {"error": 0, "drift": 1, "warning": 2, "ok": 3}
-"""Display order within a section: most severe first."""
+SEVERITY_ORDER: dict[Severity, int] = {"error": 0, "warning": 1, "info": 2}
+"""Display order within a group: most severe first."""
+
+HEALTHY: frozenset[Status] = frozenset({"ok", "seeded"})
+"""Statuses that represent a passing check."""
+
+REPAIRABLE_BY_APPLY: frozenset[Status] = frozenset({"drift", "stale"})
+"""Statuses ``--check`` treats as drift worth a distinct exit code."""
 
 @dataclass(frozen=True, slots=True)
 class CheckResult:
-    """One diagnostic result emitted by an adapter health check."""
+    """One diagnostic result emitted by an adapter or scope health check.
+
+    Attributes:
+        status: What is true of the thing checked.
+        severity: How much that matters; only ``error`` fails the command.
+        agent: Owning adapter, or ``None`` for a scope-level check.
+        category: Grouping axis for report sections.
+        kind: What sort of thing was checked.
+        source: Packaged file the target is produced from, when the check
+            compared two files.
+        target: Native or staged file the check inspected.
+        message: Detail that ``source``/``target`` cannot carry — a validation
+            error, a dependency name, a plugin failure. Empty for artifact rows,
+            whose status and two paths already say everything.
+    """
 
     status: Status
+    severity: Severity
     agent: str | None
     category: Category
-    check: str
-    message: str
+    kind: Kind
+    source: Path | None = None
+    target: Path | None = None
+    message: str = ""
 
 
 def check_agent(
@@ -67,31 +143,28 @@ def check_agent(
     merged, _ = resolve_config(adapter, scope, repo_root)
     errors = adapter.validate(merged.config)
     results.extend(
-        CheckResult("error", adapter.name, "config", "schema", error)
+        CheckResult("invalid", "error", adapter.name, "config", "schema", message=error)
         for error in errors
     )
     if not errors:
-        results.append(
-            CheckResult(
-                "ok", adapter.name, "config", "schema", "configuration is valid"
-            )
-        )
+        results.append(CheckResult("ok", "info", adapter.name, "config", "schema"))
 
     template_errors = adapter.template_errors()
     results.extend(
-        CheckResult("error", adapter.name, "config", "template", error)
+        CheckResult(
+            "invalid", "error", adapter.name, "config", "template", message=error
+        )
         for error in template_errors
     )
     if not template_errors:
-        results.append(
-            CheckResult("ok", adapter.name, "config", "template", "templates compile")
-        )
+        results.append(CheckResult("ok", "info", adapter.name, "config", "template"))
 
     rendered_root = Path(scope_root) / adapter.name / "rendered"
     expected_rendered: set[Path] = set()
     for artifact in adapter.artifacts(scope):
         native = adapter.native_path(scope, repo_root, artifact)
         native_exists = native.exists()
+        source = adapter.source_path(artifact)
 
         if artifact.seed_only:
             # Apply writes a seed file once and then never touches it again, so
@@ -103,7 +176,7 @@ def check_agent(
                     adapter.rendered_path(scope_root, scope, artifact)
                 )
             results.append(
-                _seed_result(adapter.name, artifact.key, native, native_exists)
+                _seed_result(adapter.name, artifact, source, native, native_exists)
             )
             continue
 
@@ -114,6 +187,7 @@ def check_agent(
         expected = content_hash(adapter.render_artifact(artifact, merged.config, scope))
         differs = native_exists and file_hash(native) != expected
 
+        rendered: Path | None = None
         if artifact.root == "share":
             rendered_exists = native_exists
             stale = False
@@ -126,9 +200,11 @@ def check_agent(
         results.append(
             _artifact_result(
                 adapter.name,
-                artifact.key,
+                artifact,
+                source,
                 native,
                 native_exists,
+                rendered,
                 rendered_exists,
                 differs,
                 stale,
@@ -140,55 +216,63 @@ def check_agent(
             if candidate.is_file() and candidate not in expected_rendered:
                 results.append(
                     CheckResult(
+                        "orphan",
                         "warning",
                         adapter.name,
                         "artifacts",
-                        "orphan",
-                        f"unexpected rendered file: {candidate}",
+                        "artifact",
+                        target=candidate,
+                        message="unexpected rendered file",
                     )
                 )
 
     if adapter.binary_name:
-        if shutil.which(adapter.binary_name):
-            results.append(
-                CheckResult(
-                    "ok", adapter.name, "environment", "binary", adapter.binary_name
-                )
+        found = shutil.which(adapter.binary_name)
+        results.append(
+            CheckResult(
+                "ok" if found else "missing",
+                "info" if found else "warning",
+                adapter.name,
+                "environment",
+                "binary",
+                message=adapter.binary_name,
             )
-        else:
-            results.append(
-                CheckResult(
-                    "warning",
-                    adapter.name,
-                    "environment",
-                    "binary",
-                    f"optional binary not found: {adapter.binary_name}",
-                )
-            )
+        )
 
     return results
 
 
 def _seed_result(
-    agent: str, key: str, native: Path, native_exists: bool
+    agent: str,
+    artifact: Artifact,
+    source: Path | None,
+    native: Path,
+    native_exists: bool,
 ) -> CheckResult:
     """Report a user-owned seed file by existence alone.
 
     Seed artifacts are written once and then owned by the user, so there is no expected
-    content to compare against after the initial write.
+    content to compare against after the initial write — which is why the healthy status
+    is ``seeded`` rather than ``ok``.
     """
-    if native_exists:
-        return CheckResult("ok", agent, "artifacts", "seed", f"{key}: seeded")
     return CheckResult(
-        "warning", agent, "artifacts", "native", f"{key}: missing: {native}"
+        "seeded" if native_exists else "missing",
+        "info" if native_exists else "warning",
+        agent,
+        "artifacts",
+        artifact.kind,
+        source=source,
+        target=native,
     )
 
 
 def _artifact_result(
     agent: str,
-    key: str,
+    artifact: Artifact,
+    source: Path | None,
     native: Path,
     native_exists: bool,
+    rendered: Path | None,
     rendered_exists: bool,
     differs: bool,
     stale: bool = False,
@@ -206,33 +290,49 @@ def _artifact_result(
     )
     if not (writable_parent and os.access(writable_parent, os.W_OK)):
         return CheckResult(
-            "error", agent, "artifacts", "path", f"{key}: parent not writable: {parent}"
+            "unwritable",
+            "error",
+            agent,
+            "artifacts",
+            artifact.kind,
+            source=source,
+            target=native,
         )
     if differs:
         return CheckResult(
-            "drift", agent, "artifacts", "drift", f"{key}: differs: {native}"
-        )
-    if stale:
-        return CheckResult(
             "drift",
+            "warning",
             agent,
             "artifacts",
+            artifact.kind,
+            source=source,
+            target=native,
+        )
+    if stale:
+        # The out-of-date file is the staged copy, not the native one, so point
+        # `target` at what actually has to be rewritten.
+        return CheckResult(
             "stale",
-            f"{key}: staged copy is out of date; run apply: {native}",
+            "warning",
+            agent,
+            "artifacts",
+            artifact.kind,
+            source=source,
+            target=rendered or native,
         )
     if not native_exists:
-        if rendered_exists:
-            return CheckResult(
-                "warning",
-                agent,
-                "artifacts",
-                "orphan",
-                f"{key}: rendered but not synced: {native}",
-            )
         return CheckResult(
-            "warning", agent, "artifacts", "native", f"{key}: missing: {native}"
+            "unsynced" if rendered_exists else "missing",
+            "warning",
+            agent,
+            "artifacts",
+            artifact.kind,
+            source=source,
+            target=native,
         )
-    return CheckResult("ok", agent, "artifacts", "artifact", f"{key}: in sync")
+    return CheckResult(
+        "ok", "info", agent, "artifacts", artifact.kind, source=source, target=native
+    )
 
 
 def check_environment(
@@ -258,36 +358,32 @@ def check_environment(
     # AgentRegistry.discover); doctor is where that becomes visible.
     results.extend(
         CheckResult(
+            "invalid",
             "error",
             None,
             "environment",
             "plugin",
-            f"adapter entry point {error.entry_point!r} failed to load: {error.reason}",
+            message=(
+                f"adapter entry point {error.entry_point!r} failed to load: "
+                f"{error.reason}"
+            ),
         )
         for error in registry.errors
     )
-    if shutil.which("jq"):
-        results.append(CheckResult("ok", None, "environment", "dependency", "jq"))
-    else:
+    dependencies: tuple[tuple[str, Severity, str], ...] = (
+        ("jq", "error", "required by the safety hooks"),
+        ("gitleaks", "warning", "recommended for secret scanning"),
+    )
+    for tool, severity, note in dependencies:
+        found = shutil.which(tool)
         results.append(
             CheckResult(
-                "error",
+                "ok" if found else "missing",
+                "info" if found else severity,
                 None,
                 "environment",
                 "dependency",
-                "required safety-hook dependency not found: jq",
-            )
-        )
-    if shutil.which("gitleaks"):
-        results.append(CheckResult("ok", None, "environment", "dependency", "gitleaks"))
-    else:
-        results.append(
-            CheckResult(
-                "warning",
-                None,
-                "environment",
-                "dependency",
-                "recommended secret-scanning dependency not found: gitleaks",
+                message=tool if found else f"{tool} ({note})",
             )
         )
 
@@ -298,29 +394,32 @@ def check_environment(
             if candidate.is_file() and candidate not in expected_share:
                 results.append(
                     CheckResult(
+                        "orphan",
                         "warning",
                         None,
                         "artifacts",
-                        "orphan",
-                        f"unexpected shared file: {candidate}",
+                        "artifact",
+                        target=candidate,
+                        message="unexpected shared file",
                     )
                 )
 
     state = StateStore(scope_root)
-    for stale in state.stale_entries():
-        results.append(
-            CheckResult("warning", None, "state", "state", f"stale entry: {stale}")
-        )
+    results.extend(
+        CheckResult("stale", "warning", None, "state", "state", message=str(entry))
+        for entry in state.stale_entries()
+    )
     return results
 
 
-def sort_key(result: CheckResult) -> tuple[int, int, str, str]:
-    """Order results most-severe first, then by agent and check within a status."""
+def sort_key(result: CheckResult) -> tuple[int, int, str, str, str]:
+    """Order results most-severe first, then by agent, kind, and target."""
     return (
         CATEGORY_ORDER.index(result.category),
-        STATUS_ORDER[result.status],
+        SEVERITY_ORDER[result.severity],
         result.agent or "",
-        result.check,
+        result.kind,
+        str(result.target or result.message),
     )
 
 

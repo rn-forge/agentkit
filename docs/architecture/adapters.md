@@ -34,12 +34,13 @@ Implement `rn_forge.agentkit.agents.base.AgentAdapter`:
   defaults must not leak into local defaults; see the
   [configuration model](index.md#configuration-model).
 - **Primary renderer and parser** — the renderer turns resolved values into the
-  agent's native config format; the parser reads that format back, which is what
-  makes `agentkit diff --write` write-back possible. The parser must preserve
-  comments, which is why the codebase uses `tomlkit` and `ruamel.yaml` rather
-  than `tomllib` and `PyYAML`. Capture parses its expected baseline from an
-  in-memory render through the base class's `parse_native_text`, so a
-  path-based `parse_native` is all an adapter has to supply.
+  agent's native config format; the parser reads that format back, which is
+  what makes `agentkit diff --write` write-back possible. The parser must
+  preserve comments, which is why the codebase uses `tomlkit` and
+  `ruamel.yaml` rather than `tomllib` and `PyYAML`. Capture parses its
+  expected baseline from an in-memory render through the base class's
+  `parse_native_text`, so a path-based `parse_native` is all an adapter has to
+  supply.
 - **Ordered artifact declarations** — per the model above.
 - **Optional `cli_extension`** — an adapter-specific Typer app, if the agent
   needs commands the generic surface doesn't cover.
@@ -60,9 +61,9 @@ read. Third-party adapters share everything after loading: the same
 commands.
 
 Their names are reserved. A discovered adapter is rejected — with the reason
-reported by `doctor` — when it claims a built-in name, uses a name that is not
-a safe directory segment, or declares duplicate artifact keys or destinations.
-A plugin that fails to import is skipped and reported rather than fatal, so one
+reported by `doctor` — when it claims a built-in name, uses a name that is not a
+safe directory segment, or declares duplicate artifact keys or destinations. A
+plugin that fails to import is skipped and reported rather than fatal, so one
 broken package cannot take down `--help` or the other agents.
 
 ## Reference

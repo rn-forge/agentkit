@@ -50,6 +50,7 @@ class CodexAdapter(AgentAdapter):
                 Artifact(
                     key="hooks/post-edit-format.sh",
                     native_relative=Path("codex/hooks/post-edit-format.sh"),
+                    kind="hook",
                     root="share",
                     source=self._shared_scripts_dir / "post-edit-format.sh",
                     executable=True,
@@ -63,6 +64,7 @@ class CodexAdapter(AgentAdapter):
                 Artifact(
                     _AGENTS_MD,
                     Path(_AGENTS_MD),
+                    kind="doc",
                     template="AGENTS.local.md.j2",
                     seed_only=True,
                 ),
@@ -71,6 +73,7 @@ class CodexAdapter(AgentAdapter):
             Artifact(
                 "hooks/guard-core.sh",
                 Path("_common/hooks/guard-core.sh"),
+                kind="hook",
                 root="share",
                 source=self._shared_scripts_dir / "guard-core.sh",
             ),
@@ -78,6 +81,7 @@ class CodexAdapter(AgentAdapter):
                 Artifact(
                     f"hooks/{name}",
                     Path("codex/hooks") / name,
+                    kind="hook",
                     root="share",
                     source=self._assets_dir / "hooks" / name,
                     executable=True,
@@ -89,19 +93,6 @@ class CodexAdapter(AgentAdapter):
                 )
             ],
             Artifact(
-                "hooks/post-write-unwrap-md.sh",
-                Path("codex/hooks/post-write-unwrap-md.sh"),
-                root="share",
-                source=self._shared_scripts_dir / "post-write-unwrap-md.sh",
-                executable=True,
-            ),
-            Artifact(
-                "hooks/unwrap_md.py",
-                Path("codex/hooks/unwrap_md.py"),
-                root="share",
-                source=self._shared_scripts_dir / "unwrap_md.py",
-            ),
-            Artifact(
                 _HOOKS_JSON,
                 Path(".codex/hooks.json"),
                 source=self._assets_dir / _HOOKS_JSON,
@@ -110,6 +101,7 @@ class CodexAdapter(AgentAdapter):
             Artifact(
                 _AGENTS_MD,
                 Path(".codex/AGENTS.md"),
+                kind="doc",
                 template="AGENTS.md.j2",
             ),
             *self.skill_artifacts(self._skills_dir),
@@ -131,12 +123,20 @@ class CodexAdapter(AgentAdapter):
 
     def defaults(self, scope: Scope) -> dict[str, Any]:
         """Merge schema defaults with the packaged Codex scope defaults."""
-        packaged = read_config(Path(__file__).parent / "defaults" / f"{scope}.toml")
+        packaged = read_config(self.defaults_path(scope))
         return (
             ConfigMerger(self.schema())
             .merge(defaults_for(self.schema()), packaged)
             .config
         )
+
+    def defaults_path(self, scope: Scope) -> Path:
+        """Return the packaged Codex scope-defaults TOML file."""
+        return Path(__file__).parent / "defaults" / f"{scope}.toml"
+
+    def is_native_hook_artifact(self, artifact: Artifact) -> bool:
+        """Identify ``hooks.json``, whose entire content is hook registration."""
+        return artifact.key == _HOOKS_JSON
 
     def render(self, merged_config: dict[str, Any], *, scope: Scope = "global") -> str:
         """Validate and render merged configuration as TOML."""
@@ -161,10 +161,18 @@ class CodexAdapter(AgentAdapter):
             return self.render_skill_artifact(artifact)
         if artifact.key == _AGENTS_MD:
             assert artifact.template is not None
-            return RenderEngine(self._shared_instructions_dir).render_template(
+            return RenderEngine(self.template_root(artifact)).render_template(
                 artifact.template, {}
             )
         return super().render_artifact(artifact, merged_config, scope)
+
+    def template_root(self, artifact: Artifact) -> Path:
+        """Resolve skill and shared-instruction templates outside ``template_dir``."""
+        if artifact.key.startswith("skills/"):
+            return self.shared_skills_dir
+        if artifact.key == _AGENTS_MD:
+            return self._shared_instructions_dir
+        return super().template_root(artifact)
 
     def template_errors(self) -> list[str]:
         """Return Codex template compilation errors."""

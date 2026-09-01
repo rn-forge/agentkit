@@ -107,6 +107,31 @@ class AgentAdapter(ABC):
         """Return schema defaults for a scope."""
         return defaults_for(self.schema())
 
+    def is_native_hook_artifact(self, artifact: Artifact) -> bool:
+        """Report whether an artifact's entire native content is hook wiring.
+
+        The primary ``config`` artifact usually mixes hook registrations with settings
+        that stay meaningful without agentkit (Claude's ``permissions.deny``,
+        ``outputStyle``) — uninstall edits it in place rather than deleting it. Some
+        adapters also declare a separate, statically-sourced artifact that exists solely
+        to register hooks (Codex's ``hooks.json``): unlike the primary config, deleting
+        it outright loses nothing else, so uninstall's file cleanup removes it alongside
+        skills rather than trying to edit it. ``False`` by default; an adapter with such
+        an artifact overrides this to identify it by key.
+        """
+        return False
+
+    def defaults_path(self, scope: Scope) -> Path | None:
+        """Return the packaged scope-defaults file :meth:`defaults` reads from, if any.
+
+        Exposed so capture can promote a managed override into the file that ships as
+        everyone's default, mirroring how ``Artifact.source`` exposes a static
+        artifact's packaged source to :func:`capture_assets
+        <rn_forge.agentkit.core.manager.capture_assets>`. ``None`` means this adapter's
+        defaults are schema-only, with nothing packaged to promote into.
+        """
+        return None
+
     def read_managed_config(self, path: Path) -> dict[str, Any]:
         """Read an optional agentkit-managed source file."""
         return read_config(path, missing_ok=True)
@@ -188,6 +213,7 @@ class AgentAdapter(ABC):
                     Artifact(
                         key=f"skills/{rendered.as_posix()}",
                         native_relative=native_skills_dir / rendered,
+                        kind="skill",
                         template=relative.as_posix(),
                     )
                 )
@@ -196,6 +222,7 @@ class AgentAdapter(ABC):
                     Artifact(
                         key=f"skills/{relative.as_posix()}",
                         native_relative=native_skills_dir / relative,
+                        kind="skill",
                         source=path,
                     )
                 )
@@ -237,12 +264,48 @@ class AgentAdapter(ABC):
             return artifact.source.read_bytes()
         if artifact.key == "config":
             return self.render(merged_config, scope=scope)
-        template_dir = getattr(self, "template_dir", None)
-        if not isinstance(template_dir, Path) or artifact.template is None:
+        if artifact.template is None:
             raise ValueError(f"Cannot render templated artifact: {artifact.key}")
-        return RenderEngine(template_dir).render_template(
+        return RenderEngine(self.template_root(artifact)).render_template(
             artifact.template, {"config": merged_config}
         )
+
+    def template_root(self, artifact: Artifact) -> Path:
+        """Return the packaged directory ``artifact.template`` is resolved against.
+
+        Adapters that render some artifacts from a directory other than
+        ``template_dir`` override this rather than only :meth:`render_artifact`,
+        so ``doctor`` can name a template artifact's source file without
+        re-deriving the same dispatch a second time and drifting from it.
+
+        Raises:
+            ValueError: The adapter declares no template directory.
+        """
+        template_dir = getattr(self, "template_dir", None)
+        if not isinstance(template_dir, Path):
+            raise ValueError(f"Cannot render templated artifact: {artifact.key}")
+        return template_dir
+
+    def source_path(self, artifact: Artifact) -> Path | None:
+        """Return the packaged file an artifact's content is produced from.
+
+        For a static artifact this is the copied file; for a templated one, the
+        template. The primary ``config`` artifact resolves to its template too,
+        even though the *values* come from the merged layer chain — use
+        ``agentkit diff`` to see those.
+
+        Returns:
+            An absolute packaged path, or ``None`` when the adapter declares no
+            template directory to resolve the template against.
+        """
+        if artifact.source is not None:
+            return artifact.source
+        if artifact.template is None:
+            return None
+        try:
+            return self.template_root(artifact) / artifact.template
+        except ValueError:
+            return None
 
     def template_errors(self) -> list[str]:
         """Return template compilation errors, if the adapter uses templates."""

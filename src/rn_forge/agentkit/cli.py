@@ -11,7 +11,7 @@ import sys
 import typer
 
 from .agents.registry import registry
-from .commands import global_cmds, project_cmds, shared_cmds
+from .commands import global_cmds, project_cmds, self_cmds, shared_cmds
 from .commands.common import fail, set_json_mode
 from .core.state import start_backup_run
 
@@ -44,6 +44,7 @@ def root_options(
 app.add_typer(global_cmds.app, name="global")
 app.add_typer(project_cmds.app, name="project")
 app.add_typer(shared_cmds.app)
+app.add_typer(self_cmds.app)
 
 for adapter in registry.discover():
     # A plugin's `cli_extension` runs arbitrary third-party code (a property

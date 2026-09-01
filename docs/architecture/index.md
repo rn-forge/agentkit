@@ -56,17 +56,17 @@ would appear managed while quietly diverging. Copy plus hash plus drift
 detection plus backup stays auditable instead.
 
 Hashes in `state.json` make repeated runs idempotent, and manual native drift is
-backed up under `backups/<run-timestamp>/` before overwrite. `agentkit diff
---write` runs the loop in reverse, capturing native primary-config edits back
-into the managed source. For artifacts with a packaged static source instead
-of a template — hook scripts and skill files — the same flag copies a
-hand-edited native file back onto its packaged source path in this checkout,
-so a quick fix made directly in `~/.claude/hooks/` or `~/.claude/skills/`
-becomes part of the versioned asset pack instead of being silently overwritten
-by the next `apply`. That only lands somewhere useful when agentkit is running
-from an editable checkout of this repo (its own dogfooding loop); against an
-installed, non-editable package the write is reported as unwritable rather
-than raising.
+backed up under `backups/<run-timestamp>/` before overwrite.
+`agentkit diff --write` runs the loop in reverse, capturing native
+primary-config edits back into the managed source. For artifacts with a packaged
+static source instead of a template — hook scripts and skill files — the same
+flag copies a hand-edited native file back onto its packaged source path in this
+checkout, so a quick fix made directly in `~/.claude/hooks/` or
+`~/.claude/skills/` becomes part of the versioned asset pack instead of being
+silently overwritten by the next `apply`. That only lands somewhere useful when
+agentkit is running from an editable checkout of this repo (its own dogfooding
+loop); against an installed, non-editable package the write is reported as
+unwritable rather than raising.
 
 Hook scripts are referenced from agent configs by absolute path and run from
 `<scope-root>/<agent>/hooks/` — they are never copied into `~/.claude` or
@@ -88,21 +88,21 @@ Two parity exclusions are intentional:
 - Compaction context injection remains Claude-only, because Codex has no
   equivalent context-injection behavior for this asset pack.
 
-Not every hook is a guard. `post-write-unwrap-md.sh` fires on
-`PostToolUse`/`Write|Edit|MultiEdit` (Codex: `Edit|Write`) against `.md` files
-and unwraps prose back to one line per paragraph or list item via the
-co-installed `unwrap_md.py`, so hand-authored docs stay diff-friendly no
-matter which agent wrote them. It always exits 0 — a formatting convenience,
-not something that can block an edit that already happened — and a repo opts
-out globally with a `.nounwrap` marker at its git root.
+Not every hook is a guard. The repository-local `post-edit-format.sh` invokes an
+installed formatter for the file an agent just changed and always exits 0.
+Markdown repositories opt in with a root `.mdformat.toml`; the hook then uses
+their `mdformat` executable, preferring `.venv/bin` when present. It never
+installs a missing formatter. Formatting policy and dependencies therefore
+belong to the repository, while agentkit only registers the post-edit trigger.
+The global pack does not impose a Markdown style on arbitrary repositories.
 
 ## Instruction and skill single-sourcing
 
-Instruction files are single-sourced: `~/.claude/CLAUDE.md`, `~/.codex/AGENTS.md`,
-and `~/.claude/output-styles/concise.md` all render from shared partials in
-`src/rn_forge/agentkit/assets/instructions/`, so the two agents cannot drift
-apart. Adapter tests assert each rendered file byte-matches its packaged
-snapshot.
+Instruction files are single-sourced: `~/.claude/CLAUDE.md`,
+`~/.codex/AGENTS.md`, and `~/.claude/output-styles/concise.md` all render from
+shared partials in `src/rn_forge/agentkit/assets/instructions/`, so the two
+agents cannot drift apart. Adapter tests assert each rendered file byte-matches
+its packaged snapshot.
 
 Skills work the same way, from `src/rn_forge/agentkit/assets/skills/`. Both
 agents read the identical skill container (`<name>/SKILL.md` with `name` +

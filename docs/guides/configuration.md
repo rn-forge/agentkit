@@ -41,36 +41,38 @@ comes first, and checks that passed are summarized rather than listed — pass
 `--all` to see them. `--json` always emits every check, ungrouped and
 unfiltered.
 
-`project init` scaffolds the managed sources, renders and syncs native files, and
-adds the machine-local derived-data block to the repository `.gitignore`.
+Each artifact row is numbered. When run at a terminal (not piped or scripted),
+`doctor` prompts after the tables for a row number and prints that artifact's
+unified diff; blank input, `q`, Ctrl+D, or Ctrl+C exit the prompt.
+
+`project init` scaffolds the managed sources, renders and syncs native files,
+and adds the machine-local derived-data block to the repository `.gitignore`.
 
 ## What the global pack installs
 
 `agentkit global apply` installs these global artifacts:
 
 | Agent | Native agent files | Shared executable hooks |
-| --- | --- | --- |
-| Claude | `~/.claude/settings.json`, `~/.claude/CLAUDE.md`, `~/.claude/output-styles/concise.md`, `~/.claude/skills/**` | `claude/hooks/pre-bash-guard.sh`, `user-prompt-secret-guard.sh`, `pre-write-protect.sh`, `session-compact-context.sh`, `post-write-unwrap-md.sh` |
-| Codex | `~/.codex/config.toml`, `~/.codex/AGENTS.md`, `~/.codex/hooks.json`, `~/.codex/skills/**` | `codex/hooks/pre-bash-guard.sh`, `user-prompt-secret-guard.sh`, `pre-write-protect.sh`, `post-write-unwrap-md.sh` |
+| -- | -- | -- |
+| Claude | `~/.claude/settings.json`, `~/.claude/CLAUDE.md`, `~/.claude/output-styles/concise.md`, `~/.claude/skills/**` | `claude/hooks/pre-bash-guard.sh`, `user-prompt-secret-guard.sh`, `pre-write-protect.sh`, `session-compact-context.sh` |
+| Codex | `~/.codex/config.toml`, `~/.codex/AGENTS.md`, `~/.codex/hooks.json`, `~/.codex/skills/**` | `codex/hooks/pre-bash-guard.sh`, `user-prompt-secret-guard.sh`, `pre-write-protect.sh` |
 
 The branch-protection guard blocks force pushes and pushes to protected
 branches. `AGENTKIT_PROTECTED_BRANCHES` overrides the default `main|master`
 pattern (the legacy `CLAUDE_PROTECTED_BRANCHES` is still honored as a fallback).
 
-`post-write-unwrap-md.sh` runs on every `Write`/`Edit`/`MultiEdit` (Codex:
-`Edit|Write`) that touches a `.md` file and unwraps its prose back to one line
-per paragraph/list item, via the co-installed `unwrap_md.py`. It never blocks
-and never writes when the whitespace-normalized document would change (a hard
-line break, or content drift it can't safely resolve) — see the script's own
-comments for the exact refusal conditions. A repo opts out globally by adding
-a `.nounwrap` marker file at its git root.
-
 ## What project init and update install
 
 | Agent | Native agent files | Shared executable hooks |
-| --- | --- | --- |
+| -- | -- | -- |
 | Claude | `<repo>/.claude/settings.local.json`, `<repo>/CLAUDE.md` (seed) | `<repo>/.rn-forge/agentkit/claude/hooks/post-edit-format.sh` |
 | Codex | `<repo>/.codex/config.toml`, `<repo>/.codex/hooks.json`, `<repo>/AGENTS.md` (seed) | `<repo>/.rn-forge/agentkit/codex/hooks/post-edit-format.sh` |
+
+`post-edit-format.sh` uses formatter binaries already installed by the
+repository and skips missing tools. Markdown repositories opt in with a root
+`.mdformat.toml`; the hook then prefers `<repo>/.venv/bin/mdformat`, followed by
+an `mdformat` on `PATH`. It never downloads a formatter while handling an agent
+event, and the repository's formatter configuration remains the source of truth.
 
 ## Repo instruction seeds
 
@@ -82,9 +84,9 @@ never overwrite them, and `agentkit diff` does not treat divergence as drift.
 
 The seeded `AGENTS.md` is a pointer that tells any non-Claude agent to read
 `CLAUDE.md` and follow it as if its contents appeared inline, plus a standing
-instruction not to add guidance to the pointer itself. That keeps one set of repo
-instructions instead of two files drifting apart. The seeded `CLAUDE.md` is a
-short scaffold with placeholder sections for the repo to fill in.
+instruction not to add guidance to the pointer itself. That keeps one set of
+repo instructions instead of two files drifting apart. The seeded `CLAUDE.md` is
+a short scaffold with placeholder sections for the repo to fill in.
 
 ## What to commit
 
@@ -95,7 +97,8 @@ Commit these — they carry team-shared intent:
 
 - `<repo>/.rn-forge/agentkit/<agent>/config.toml` — the managed source
 - `<repo>/.codex/config.toml`, `<repo>/.codex/hooks.json` — Codex has no
-  personal tier at repo level, so its rendered config *is* the shared team config
+  personal tier at repo level, so its rendered config *is* the shared team
+  config
 - `<repo>/CLAUDE.md`, `<repo>/AGENTS.md` — seeded once, then hand-maintained
 
 Ignore these — all regenerable with `agentkit project update`:
@@ -118,6 +121,7 @@ agent-native files (for example `.claude/settings.local.json`) is left to each
 repo's own `.gitignore`.
 
 !!! warning "Run `agentkit project update` after cloning"
+
     The ignored hook scripts are referenced by absolute path from the *committed*
-    `.codex/hooks.json`. A fresh clone has the config but not the scripts, so
-    hooks point at missing files until `project update` regenerates them.
+    `.codex/hooks.json`. A fresh clone has the config but not the scripts, so hooks
+    point at missing files until `project update` regenerates them.

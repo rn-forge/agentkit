@@ -8,14 +8,14 @@ Python entry points.
 The problem it solves: every coding agent wants its own config tree
 (`~/.claude`, `~/.codex`, `<repo>/.claude`, …), and keeping those trees
 consistent by hand means the same policy decision gets written several times and
-drifts. agentkit keeps the decision in one managed source per agent, renders each
-agent's native files from it, and reconciles them with a hash-tracked one-way
-copy that backs up manual drift instead of silently clobbering it.
+drifts. agentkit keeps the decision in one managed source per agent, renders
+each agent's native files from it, and reconciles them with a hash-tracked
+one-way copy that backs up manual drift instead of silently clobbering it.
 
 ## Where to start
 
 | You want to | Read |
-| --- | --- |
+| -- | -- |
 | Install the CLI and run it | [Development](guides/development.md#installing-the-cli) |
 | Understand how values resolve and where files land | [Architecture overview](architecture/index.md) |
 | Add support for a new agent | [Adapters and artifacts](architecture/adapters.md) |
