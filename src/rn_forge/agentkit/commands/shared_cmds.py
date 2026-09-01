@@ -1,7 +1,7 @@
 """Implement root-level diff, doctor, and version workflows.
 
-The commands combine adapter selection with core resolution, diagnostics, and
-structural diff helpers without mutating managed or native files.
+The commands combine adapter selection with core resolution, diagnostics, and structural
+diff helpers without mutating managed or native files.
 """
 
 from __future__ import annotations
@@ -50,9 +50,7 @@ app = typer.Typer()
 def diff_command(
     ctx: typer.Context,
     scope: Literal["global", "local"] = typer.Option("local", "--scope"),
-    agent: list[str] | None = typer.Option(
-        None, "--agent", "-a", help=AGENT_HELP
-    ),
+    agent: list[str] | None = typer.Option(None, "--agent", "-a", help=AGENT_HELP),
     set_value: list[str] | None = typer.Option(
         None, "--set", help="Override dotted KEY=VALUE."
     ),
@@ -258,9 +256,7 @@ def _render_diff(item: dict[str, Any], *, scope: str, show_all: bool) -> None:
 def doctor_command(
     ctx: typer.Context,
     scope: Literal["global", "local"] = typer.Option("local", "--scope"),
-    agent: list[str] | None = typer.Option(
-        None, "--agent", "-a", help=AGENT_HELP
-    ),
+    agent: list[str] | None = typer.Option(None, "--agent", "-a", help=AGENT_HELP),
     repo: Path = typer.Option(Path.cwd(), "--repo", help=REPO_HELP),
     check: bool = typer.Option(False, "--check", help="Exit 2 when drift exists."),
     show_all: bool = typer.Option(False, "--all", help="Include checks that passed."),

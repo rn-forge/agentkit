@@ -7,6 +7,10 @@ FILE=$(echo "$INPUT" | jq -r '.tool_input.file_path // .tool_input.path // ""' 2
 [[ -z "$FILE" ]] && exit 0
 [[ ! -f "$FILE" ]] && exit 0
 
+# `npx` will silently fetch and execute a missing package from the registry.
+# A formatting hook that fires on every agent edit must never do that, so both
+# npx-based formatters run with --no-install: they use what the project or the
+# user already installed, or they do nothing.
 run_formatter() {
   local formatter="$1"
   shift
@@ -21,10 +25,10 @@ case "$FILE" in
   command -v ruff >/dev/null 2>&1 && run_formatter ruff ruff format "$FILE"
   ;;
 *.ts | *.tsx | *.js | *.jsx | *.json | *.html | *.scss | *.css)
-  command -v npx >/dev/null 2>&1 && run_formatter prettier npx prettier --write "$FILE"
+  command -v npx >/dev/null 2>&1 && run_formatter prettier npx --no-install prettier --write "$FILE"
   ;;
 *.md)
-  command -v npx >/dev/null 2>&1 && run_formatter markdownlint-cli2 npx markdownlint-cli2 --fix "$FILE"
+  command -v npx >/dev/null 2>&1 && run_formatter markdownlint-cli2 npx --no-install markdownlint-cli2 --fix "$FILE"
   ;;
 *.java)
   command -v google-java-format >/dev/null 2>&1 && run_formatter google-java-format google-java-format --replace "$FILE"

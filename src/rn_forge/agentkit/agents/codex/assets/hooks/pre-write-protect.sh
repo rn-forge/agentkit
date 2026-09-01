@@ -9,7 +9,11 @@ LIB="${0%/*}/../../_common/hooks/guard-core.sh"
 guard_require_jq_json "pre-write-protect" block
 
 INPUT=$(cat)
-FILE=$(printf '%s' "$INPUT" | jq -r '.tool_input.file_path // .tool_input.notebook_path // .tool_input.path // ""')
+# Fail closed: an unparseable event must not be read as "no path".
+if ! guard_event_field "$INPUT" '.tool_input.file_path // .tool_input.notebook_path // .tool_input.path'; then
+  guard_emit_json_block "hook event was not valid JSON or the path field had an unexpected type; refusing to run unclassified"
+fi
+FILE="$GUARD_FIELD"
 
 if REASON=$(guard_check_write_path "$FILE"); then
   exit 0

@@ -15,7 +15,7 @@ tasks:
       - uv version --short
 
   build:
-    desc: Build the wheel and sdist into dist/.
+    desc: Build the wheel and sdist into dist/, and check their contents.
     internal: true
     env:
       # Packaging must not reuse the in-repo cache — uv build resolves against
@@ -23,6 +23,7 @@ tasks:
       UV_CACHE_DIR: /tmp/agentkit-uv-cache
     cmds:
       - uv build
+      - uv run python scripts/check_dist_contents.py dist
 
   clean:
     desc: Remove build outputs, tool caches, and the rendered docs site.

@@ -39,6 +39,12 @@ agentkit_install() {
     return 0
   fi
 
+  if ! command -v uv >/dev/null 2>&1; then
+    echo "install.sh: uv is required but was not found on PATH." >&2
+    echo "  install it from https://docs.astral.sh/uv/getting-started/installation/" >&2
+    return 1
+  fi
+
   echo "Installing agentkit v${version} into ${target} ..."
   mkdir -p "${product_home}" || return 1
   (

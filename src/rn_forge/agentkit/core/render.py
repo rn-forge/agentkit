@@ -1,7 +1,7 @@
 """Render adapter templates with strict undefined-variable handling.
 
-Adapters use :class:`RenderEngine` with packaged template directories and the
-typed TOML/YAML filters defined here.
+Adapters use :class:`RenderEngine` with packaged template directories and the typed
+TOML/YAML filters defined here.
 """
 
 from __future__ import annotations

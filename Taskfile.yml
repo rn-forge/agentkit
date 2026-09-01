@@ -31,11 +31,12 @@ tasks:
       - task: workspace:install
 
   validate:
-    desc: The aggregate gate — lint, typecheck, test. Fails if any one fails.
+    desc: The aggregate gate — lint, typecheck, test, docs build. Any failure fails.
     cmds:
       - task: lint
       - task: typecheck
       - task: test
+      - task: docs:build
 
   lint:
     desc: Every lint — Python, task layout, CI entrypoints, and docs links.

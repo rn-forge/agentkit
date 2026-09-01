@@ -15,7 +15,7 @@ from ..agents.base import AgentAdapter, Scope
 from .artifacts import Artifact
 from .config import ConfigMerger, MergeResult
 from .diff import unified_diff
-from .io import atomic_write, read_config, update_config, write_config
+from .io import atomic_write, read_config, update_config
 from .paths import global_root, project_scope_root
 from .state import StateStore, backup_file, content_hash, file_hash
 
@@ -44,6 +44,33 @@ def project_root(start: Path | None = None) -> Path:
         if (candidate / ".git").exists():
             return candidate
     return current
+
+
+def artifact_drifted(
+    artifact: Artifact,
+    native_path: Path,
+    rendered: Path,
+    expected_hash: str,
+) -> bool:
+    """Report whether one artifact differs from what apply would write.
+
+    A seed artifact is written once and then owned by the user — apply leaves it alone
+    (see ``_apply_resolved``) and diff skips it — so only its absence counts. Comparing
+    its content would flag every ordinary edit to AGENTS.md or CLAUDE.md as drift.
+    Status commands and doctor share this rule so they agree.
+
+    A missing staged copy is *not* drift on its own, matching ``check_agent``: a fresh
+    clone (or a `share` artifact, which has no staged copy at all) has a correct native
+    file and nothing staged yet, and that must read as healthy rather than as drift.
+    Staging only matters once it exists and disagrees with what apply would write.
+    """
+    if artifact.seed_only:
+        return not native_path.exists()
+    if not native_path.exists() or file_hash(native_path) != expected_hash:
+        return True
+    if artifact.root == "share" or not rendered.exists():
+        return False
+    return file_hash(rendered) != expected_hash
 
 
 def scope_root(scope: Scope, repo_root: Path) -> Path:
@@ -124,6 +151,10 @@ def sync_adapter(
     root = scope_root(scope, repo_root)
     store = StateStore(root)
     results: list[OperationResult] = []
+    # Collected and written once at the end rather than per artifact: a single
+    # read-modify-write cycle cannot interleave with a concurrent invocation
+    # part-way through the adapter's artifact list.
+    recorded: list[tuple[Path, str, str]] = []
     for artifact in adapter.artifacts(scope):
         native = adapter.native_path(scope, repo_root, artifact)
         rendered = _managed_copy_path(adapter, root, scope, artifact, native)
@@ -167,7 +198,7 @@ def sync_adapter(
             atomic_write(native, content, mode=_artifact_mode(artifact))
         elif mode_changed:
             os.chmod(native, 0o755)
-        store.record(native, digest, "rendered")
+        recorded.append((native, digest, "rendered"))
         results.append(
             OperationResult(
                 adapter.name,
@@ -180,6 +211,8 @@ def sync_adapter(
                 backup,
             )
         )
+    if recorded:
+        store.record_many(recorded)
     return results
 
 
@@ -189,7 +222,11 @@ def reset_adapter(
     *,
     dry_run: bool = False,
 ) -> list[OperationResult]:
-    """Replace global managed configuration with defaults, then apply all files."""
+    """Restore the empty managed override, then re-apply packaged defaults.
+
+    The managed source and the native primary config are both backed up first, so a
+    hand-edited override (comments included) is recoverable after a reset.
+    """
     root = global_root()
     defaults = adapter.defaults("global")
     if dry_run:
@@ -200,12 +237,23 @@ def reset_adapter(
 
     primary = adapter.global_native_path()
     backup = backup_file(primary, root)
-    write_config(managed_config_path(adapter, root), defaults)
+    source_path = managed_config_path(adapter, root)
+    source_backup = backup_file(source_path, root)
+    # Reset restores the *empty override scaffold*, not materialized defaults.
+    # Writing defaults here would turn them into an override layer that the
+    # apply below merges on top of the packaged defaults a second time —
+    # doubling every append-merged list (see Claude's permission lists).
+    atomic_write(source_path, _managed_source_scaffold(adapter, "global"))
     results = apply_adapter(adapter, "global", repo_root)
     reset_results = [replace(result, action="reset") for result in results]
-    if backup is not None:
+    if backup is not None or source_backup is not None:
+        note = (
+            f"managed source backed up to {source_backup}"
+            if source_backup is not None
+            else ""
+        )
         reset_results = [
-            replace(result, backup_path=backup)
+            replace(result, backup_path=backup or result.backup_path, message=note)
             if result.artifact == "config"
             else result
             for result in reset_results
@@ -259,6 +307,11 @@ _MANAGED_SOURCE_HEADER = """\
 """
 
 
+def _managed_source_scaffold(adapter: AgentAdapter, scope: Scope) -> str:
+    """Return the documented empty-override scaffold for one adapter and scope."""
+    return _MANAGED_SOURCE_HEADER.format(agent=adapter.name, scope=scope)
+
+
 def scaffold_managed_source(adapter: AgentAdapter, root: Path, scope: Scope) -> bool:
     """Create a documented empty managed source when the scope has none.
 
@@ -268,9 +321,7 @@ def scaffold_managed_source(adapter: AgentAdapter, root: Path, scope: Scope) -> 
     config_path = managed_config_path(adapter, root)
     if config_path.exists():
         return False
-    atomic_write(
-        config_path, _MANAGED_SOURCE_HEADER.format(agent=adapter.name, scope=scope)
-    )
+    atomic_write(config_path, _managed_source_scaffold(adapter, scope))
     return True
 
 
@@ -353,11 +404,11 @@ def capture_assets(
 ) -> list[OperationResult]:
     """Capture hand-edited native hooks/skills back into their packaged source.
 
-    Only artifacts backed by a packaged static source file are eligible —
-    templated and primary-config artifacts are unaffected, and are handled by
-    :func:`capture_adapter` instead. A source outside this checkout (for
-    example an installed, non-editable package) is reported as unwritable
-    rather than raising, since running ``diff --write`` should still finish.
+    Only artifacts backed by a packaged static source file are eligible — templated and
+    primary-config artifacts are unaffected, and are handled by :func:`capture_adapter`
+    instead. A source outside this checkout (for example an installed, non-editable
+    package) is reported as unwritable rather than raising, since running ``diff
+    --write`` should still finish.
     """
     results: list[OperationResult] = []
     for artifact in adapter.artifacts(scope):
@@ -467,6 +518,10 @@ def _apply_resolved(
     root = scope_root(scope, repo_root)
     store = StateStore(root)
     results: list[OperationResult] = []
+    # Collected and written once at the end rather than per artifact: a single
+    # read-modify-write cycle cannot interleave with a concurrent invocation
+    # part-way through the adapter's artifact list.
+    recorded: list[tuple[Path, str, str]] = []
     for artifact in adapter.artifacts(scope):
         content = adapter.render_artifact(artifact, merged.config, scope)
         native = adapter.native_path(scope, repo_root, artifact)
@@ -518,7 +573,7 @@ def _apply_resolved(
             if artifact.key == "config"
             else "packaged"
         )
-        store.record(native, digest, source_layer)
+        recorded.append((native, digest, source_layer))
         results.append(
             OperationResult(
                 adapter.name,
@@ -532,6 +587,8 @@ def _apply_resolved(
                 message="drift detected" if drifted else "",
             )
         )
+    if recorded:
+        store.record_many(recorded)
     return results
 
 

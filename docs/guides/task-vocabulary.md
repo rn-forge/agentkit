@@ -11,7 +11,7 @@ underneath it is the actual incentive.
 | Task | Does |
 | --- | --- |
 | `task setup` | Sync the virtualenv with the dev and docs dependency groups |
-| `task validate` | The aggregate gate — `lint`, `typecheck`, `test` |
+| `task validate` | The aggregate gate — `lint`, `typecheck`, `test`, `docs:build` |
 | `task lint` | Every lint: ruff, task layout, CI entrypoints, docs links |
 | `task format` | Format Python code in place |
 | `task typecheck` | `pyright` in strict mode over `src/` |

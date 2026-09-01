@@ -358,15 +358,15 @@ def test_prompt_secret_guard_reports_gitleaks_execution_error(
     ("extension", "formatter", "arguments"),
     [
         ("py", "ruff", "format"),
-        ("ts", "npx", "prettier --write"),
-        ("tsx", "npx", "prettier --write"),
-        ("js", "npx", "prettier --write"),
-        ("jsx", "npx", "prettier --write"),
-        ("json", "npx", "prettier --write"),
-        ("html", "npx", "prettier --write"),
-        ("scss", "npx", "prettier --write"),
-        ("css", "npx", "prettier --write"),
-        ("md", "npx", "markdownlint-cli2 --fix"),
+        ("ts", "npx", "--no-install prettier --write"),
+        ("tsx", "npx", "--no-install prettier --write"),
+        ("js", "npx", "--no-install prettier --write"),
+        ("jsx", "npx", "--no-install prettier --write"),
+        ("json", "npx", "--no-install prettier --write"),
+        ("html", "npx", "--no-install prettier --write"),
+        ("scss", "npx", "--no-install prettier --write"),
+        ("css", "npx", "--no-install prettier --write"),
+        ("md", "npx", "--no-install markdownlint-cli2 --fix"),
         ("java", "google-java-format", "--replace"),
         ("sh", "shfmt", "-w"),
     ],
@@ -446,6 +446,23 @@ def test_post_edit_formatter_reports_failure_without_blocking(
         assert "ruff failed" in result.stderr
 
 
+def _run_raw(
+    rnf,
+    agent: str,
+    script: str,
+    payload: str,
+) -> subprocess.CompletedProcess:
+    """Run a hook with a literal stdin payload, valid JSON or not."""
+    path = rnf / "share" / "agentkit" / agent / "hooks" / script
+    return subprocess.run(
+        [path],
+        input=payload,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+
 def _run(
     rnf,
     agent: str,
@@ -503,3 +520,116 @@ exit "${FORMAT_EXIT:-0}"
         path.write_text(script)
         path.chmod(0o755)
     return str(bin_dir)
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "rm -r -f /",
+        "rm -f -r /",
+        "rm --recursive --force /",
+        "rm -r --force /",
+        "rm -v -rf /",
+        "rm -Rf /",
+        "rm -r -f ~",
+        "/bin/rm -rf /",
+        "command rm -rf /",
+        "git -C . push --force",
+        "git --git-dir=/tmp/x push -f",
+    ],
+)
+def test_guard_covers_equivalent_destructive_spellings(isolated_env, command) -> None:
+    """Separated flags, long flags, and Git global options are not a bypass."""
+    _, rnf, repo = isolated_env
+    apply_adapter(ClaudeAdapter(), "global", repo)
+    apply_adapter(CodexAdapter(), "global", repo)
+
+    payload = {"tool_input": {"command": command}}
+    assert _run(rnf, "claude", "pre-bash-guard.sh", payload).returncode == 2
+    codex = _run(rnf, "codex", "pre-bash-guard.sh", payload)
+    assert json.loads(codex.stdout)["decision"] == "block"
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "rm -rf /tmp/scratch",
+        "rm -f notes.txt",
+        "rm -r build",
+        "git push origin feature",
+    ],
+)
+def test_guard_still_allows_ordinary_commands(isolated_env, command) -> None:
+    _, rnf, repo = isolated_env
+    apply_adapter(ClaudeAdapter(), "global", repo)
+    subprocess.run(
+        ["git", "-C", repo, "init", "-b", "feature"],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+    payload = {"tool_input": {"command": command}}
+    assert _run(rnf, "claude", "pre-bash-guard.sh", payload).returncode == 0
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        "",
+        "not json at all",
+        '{"tool_input": {"command": ',
+        '{"tool_input": {"command": 123}}',
+        '{"tool_input": {"command": ["rm", "-rf", "/"]}}',
+    ],
+)
+def test_command_guard_fails_closed_on_unusable_events(isolated_env, payload) -> None:
+    """A guard that cannot classify its input must block, not allow."""
+    _, rnf, repo = isolated_env
+    apply_adapter(ClaudeAdapter(), "global", repo)
+    apply_adapter(CodexAdapter(), "global", repo)
+
+    claude = _run_raw(rnf, "claude", "pre-bash-guard.sh", payload)
+    assert claude.returncode == 2
+    assert "BLOCKED [pre-bash-guard]" in claude.stderr
+
+    codex = _run_raw(rnf, "codex", "pre-bash-guard.sh", payload)
+    assert json.loads(codex.stdout)["decision"] == "block"
+
+
+@pytest.mark.parametrize(
+    "payload",
+    ["", "not json at all", '{"tool_input": {"file_path": 123}}'],
+)
+def test_write_guard_fails_closed_on_unusable_events(isolated_env, payload) -> None:
+    _, rnf, repo = isolated_env
+    apply_adapter(ClaudeAdapter(), "global", repo)
+    apply_adapter(CodexAdapter(), "global", repo)
+
+    assert _run_raw(rnf, "claude", "pre-write-protect.sh", payload).returncode == 2
+    codex = _run_raw(rnf, "codex", "pre-write-protect.sh", payload)
+    assert json.loads(codex.stdout)["decision"] == "block"
+
+
+def test_write_guard_allows_events_without_a_path(isolated_env) -> None:
+    """An absent path is a well-formed event, not an unusable one."""
+    _, rnf, repo = isolated_env
+    apply_adapter(ClaudeAdapter(), "global", repo)
+
+    result = _run(rnf, "claude", "pre-write-protect.sh", {"tool_input": {}})
+    assert result.returncode == 0
+
+
+def test_prompt_guard_warns_rather_than_blocking_on_bad_events(isolated_env) -> None:
+    """Documented asymmetry: a malformed prompt event enables no destructive act."""
+    _, rnf, repo = isolated_env
+    apply_adapter(ClaudeAdapter(), "global", repo)
+    apply_adapter(CodexAdapter(), "global", repo)
+
+    claude = _run_raw(rnf, "claude", "user-prompt-secret-guard.sh", "not json")
+    assert claude.returncode == 1
+    assert "WARNING [user-prompt-secret-guard]" in claude.stderr
+
+    codex = _run_raw(rnf, "codex", "user-prompt-secret-guard.sh", "not json")
+    assert codex.returncode == 0
+    assert not codex.stdout

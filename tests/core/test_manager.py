@@ -8,6 +8,7 @@ from rn_forge.agentkit.core.artifacts import Artifact
 from rn_forge.agentkit.core.io import read_config, write_config
 from rn_forge.agentkit.core.manager import (
     apply_adapter,
+    artifact_drifted,
     capture_adapter,
     capture_assets,
     init_adapter,
@@ -17,6 +18,7 @@ from rn_forge.agentkit.core.manager import (
     sync_adapter,
 )
 from rn_forge.agentkit.core.paths import global_root, project_scope_root
+from rn_forge.agentkit.core.state import content_hash
 
 
 def test_apply_is_idempotent_and_tracks_state(isolated_env) -> None:
@@ -25,8 +27,8 @@ def test_apply_is_idempotent_and_tracks_state(isolated_env) -> None:
     source = global_root() / "codex" / "config.toml"
     write_config(source, {"model": "gpt-5"})
 
-    first = apply_adapter(adapter, "global", repo)[0]
-    second = apply_adapter(adapter, "global", repo)[0]
+    first = _result_for(apply_adapter(adapter, "global", repo), "config")
+    second = _result_for(apply_adapter(adapter, "global", repo), "config")
 
     assert first.changed is True
     assert second.changed is False
@@ -42,9 +44,10 @@ def test_apply_forwards_overrides_to_the_rendered_config(isolated_env) -> None:
     adapter = CodexAdapter()
     write_config(global_root() / "codex" / "config.toml", {"model": "gpt-5"})
 
-    applied = apply_adapter(
-        adapter, "global", repo, overrides={"model": "overridden-model"}
-    )[0]
+    applied = _result_for(
+        apply_adapter(adapter, "global", repo, overrides={"model": "overridden-model"}),
+        "config",
+    )
 
     assert 'model = "overridden-model"' in applied.rendered_path.read_text()
 
@@ -57,13 +60,15 @@ def test_dry_run_writes_nothing_and_manual_native_is_backed_up(isolated_env) -> 
     native.parent.mkdir(parents=True)
     native.write_text('model = "manual"\n')
 
-    preview = apply_adapter(adapter, "global", repo, dry_run=True)[0]
+    preview = _result_for(
+        apply_adapter(adapter, "global", repo, dry_run=True), "config"
+    )
     assert preview.changed is True
     assert "manual" in preview.diff
     assert not preview.rendered_path.exists()
     assert native.read_text() == 'model = "manual"\n'
 
-    applied = apply_adapter(adapter, "global", repo)[0]
+    applied = _result_for(apply_adapter(adapter, "global", repo), "config")
     assert applied.backup_path is not None
     assert applied.backup_path.read_text() == 'model = "manual"\n'
     assert applied.message == ""
@@ -79,7 +84,7 @@ def test_apply_warns_when_native_drifted_since_last_apply(isolated_env) -> None:
     native = adapter.global_native_path()
     native.write_text('model = "manual"\n')
     write_config(source, {"model": "managed-2"})
-    applied = apply_adapter(adapter, "global", repo)[0]
+    applied = _result_for(apply_adapter(adapter, "global", repo), "config")
 
     assert applied.backup_path is not None
     assert applied.backup_path.read_text() == 'model = "manual"\n'
@@ -107,17 +112,20 @@ def test_sync_backs_up_drift_and_reset_restores_defaults(isolated_env) -> None:
 
     native = adapter.global_native_path()
     native.write_text('model = "manual"\n')
-    synced = sync_adapter(adapter, "global", repo)[0]
+    synced = _result_for(sync_adapter(adapter, "global", repo), "config")
     assert synced.backup_path is not None
     assert '"managed"' in native.read_text()
 
-    reset = reset_adapter(adapter, repo)[0]
+    reset = _result_for(reset_adapter(adapter, repo), "config")
     assert reset.backup_path is not None
     assert "model =" not in native.read_text()
     assert 'personality = "pragmatic"' in native.read_text()
+    # Reset restores the empty override scaffold rather than materializing the
+    # defaults into it; the defaults reach the native file through apply.
     managed = managed_config_path(adapter, global_root()).read_text()
     assert "model =" not in managed
-    assert 'personality = "pragmatic"' in managed
+    assert 'personality = "pragmatic"' not in managed
+    assert "agentkit managed source" in managed
 
 
 def test_capture_updates_managed_source_and_preserves_comments(isolated_env) -> None:
@@ -126,7 +134,7 @@ def test_capture_updates_managed_source_and_preserves_comments(isolated_env) -> 
     source = global_root() / "codex" / "config.toml"
     source.parent.mkdir(parents=True)
     source.write_text('# keep\npersonality = "pragmatic"\n')
-    applied = apply_adapter(adapter, "global", repo)[0]
+    applied = _result_for(apply_adapter(adapter, "global", repo), "config")
     applied.native_path.write_text(
         applied.native_path.read_text().replace(
             'personality = "pragmatic"',
@@ -147,7 +155,7 @@ def test_capture_records_only_new_append_list_values(isolated_env) -> None:
     adapter = ClaudeAdapter()
     source = global_root() / "claude" / "config.toml"
     write_config(source, {"permissions": {"allow": ["Bash(existing:*)"]}})
-    applied = apply_adapter(adapter, "global", repo)[0]
+    applied = _result_for(apply_adapter(adapter, "global", repo), "config")
     native = json.loads(applied.native_path.read_text())
     native["permissions"]["allow"].append("Bash(captured:*)")
     applied.native_path.write_text(json.dumps(native))
@@ -254,12 +262,12 @@ def _result_for(results, key: str):
 
 
 def test_capture_works_without_the_rendered_staging_copy(isolated_env) -> None:
-    """rendered/ is gitignored, so capture must not depend on it existing."""
+    """Rendered/ is gitignored, so capture must not depend on it existing."""
     _, _, repo = isolated_env
     adapter = CodexAdapter()
     source = global_root() / "codex" / "config.toml"
     write_config(source, {"personality": "pragmatic"})
-    applied = apply_adapter(adapter, "global", repo)[0]
+    applied = _result_for(apply_adapter(adapter, "global", repo), "config")
     applied.native_path.write_text(
         'model = "gpt-5"\n' + applied.native_path.read_text()
     )
@@ -276,7 +284,7 @@ def test_capture_ignores_a_stale_rendered_staging_copy(isolated_env) -> None:
     adapter = CodexAdapter()
     source = global_root() / "codex" / "config.toml"
     write_config(source, {"model": "gpt-5"})
-    applied = apply_adapter(adapter, "global", repo)[0]
+    applied = _result_for(apply_adapter(adapter, "global", repo), "config")
     applied.rendered_path.write_text('model = "stale"\n')
 
     result = capture_adapter(adapter, "global", repo)
@@ -294,3 +302,66 @@ def test_capture_reports_a_missing_native_config_without_failing(isolated_env) -
 
     assert result.changed is False
     assert result.message == "no native config"
+
+
+def test_artifact_drifted_treats_a_missing_staged_copy_as_healthy(isolated_env) -> None:
+    """A correct native file with no staged copy yet must not read as drift.
+
+    This is the fresh-clone case: apply has run elsewhere and produced a
+    correct native file, but nothing has been staged locally yet. `doctor`
+    already treats this as healthy (see `check_agent`); `artifact_drifted`
+    backs `project status` and `global list`, and must agree so the three
+    surfaces do not contradict each other over the same repo state.
+    """
+    _, _, repo = isolated_env
+    adapter = CodexAdapter()
+    source = global_root() / "codex" / "config.toml"
+    write_config(source, {"model": "gpt-5"})
+    applied = _result_for(apply_adapter(adapter, "global", repo), "config")
+    artifact = next(a for a in adapter.artifacts("global") if a.key == applied.artifact)
+    expected = content_hash(applied.rendered_path.read_text())
+    applied.rendered_path.unlink()
+
+    assert (
+        artifact_drifted(artifact, applied.native_path, applied.rendered_path, expected)
+        is False
+    )
+
+
+def test_reset_does_not_duplicate_append_merged_defaults(isolated_env) -> None:
+    """Reset must converge, not append packaged defaults to themselves.
+
+    Claude's permission lists merge by appending, so writing materialized defaults into
+    the managed override and then applying would double every entry — and double again
+    on each subsequent reset.
+    """
+    _, _, repo = isolated_env
+    adapter = ClaudeAdapter()
+    apply_adapter(adapter, "global", repo)
+    native = adapter.global_native_path()
+    baseline = json.loads(native.read_text())["permissions"]["deny"]
+    assert baseline
+
+    for _ in range(2):
+        reset_adapter(adapter, repo)
+        deny = json.loads(native.read_text())["permissions"]["deny"]
+        assert deny == baseline
+        assert len(deny) == len(set(deny))
+
+
+def test_reset_backs_up_the_hand_edited_managed_source(isolated_env) -> None:
+    _, rnf, repo = isolated_env
+    adapter = ClaudeAdapter()
+    source = managed_config_path(adapter, global_root())
+    source.parent.mkdir(parents=True, exist_ok=True)
+    source.write_text('# my note\nmodel = "custom"\n')
+    apply_adapter(adapter, "global", repo)
+
+    reset_adapter(adapter, repo)
+
+    assert "model =" not in source.read_text()
+    backups = list((rnf / "share" / "agentkit" / "backups").rglob("config.toml"))
+    assert backups, "reset must snapshot the managed source before replacing it"
+    recovered = backups[0].read_text()
+    assert "# my note" in recovered
+    assert 'model = "custom"' in recovered

@@ -1,7 +1,7 @@
 """Implement repository init, update, and status workflows.
 
-These Typer commands locate repository roots, resolve local managed sources,
-and delegate artifact writes to the core manager.
+These Typer commands locate repository roots, resolve local managed sources, and
+delegate artifact writes to the core manager.
 """
 
 from __future__ import annotations
@@ -18,14 +18,16 @@ from ..core.io import atomic_write
 from ..core.manager import (
     OperationResult,
     apply_adapter,
+    artifact_drifted,
     init_adapter,
     managed_config_path,
     project_root,
     resolve_config,
 )
 from ..core.paths import project_scope_root
-from ..core.state import content_hash, file_hash
+from ..core.state import content_hash
 from .common import (
+    command_boundary,
     AGENT_HELP,
     DRY_RUN_HELP,
     JSON_HELP,
@@ -59,13 +61,9 @@ _GITIGNORE_ENTRIES = (
 @app.command("init")
 def init_command(
     ctx: typer.Context,
-    agent: list[str] | None = typer.Option(
-        None, "--agent", "-a", help=AGENT_HELP
-    ),
+    agent: list[str] | None = typer.Option(None, "--agent", "-a", help=AGENT_HELP),
     repo: Path = typer.Option(Path.cwd(), "--repo", help=REPO_HELP),
-    dry_run: bool = typer.Option(
-        False, "--dry-run", help=DRY_RUN_HELP
-    ),
+    dry_run: bool = typer.Option(False, "--dry-run", help=DRY_RUN_HELP),
     quiet: bool = typer.Option(False, "--quiet", "-q", help=QUIET_HELP),
     json_output: bool = typer.Option(False, "--json", help=JSON_HELP),
 ) -> None:
@@ -113,16 +111,12 @@ def _scaffold_gitignore(root: Path, *, dry_run: bool) -> OperationResult:
 @app.command("update")
 def update_command(
     ctx: typer.Context,
-    agent: list[str] | None = typer.Option(
-        None, "--agent", "-a", help=AGENT_HELP
-    ),
+    agent: list[str] | None = typer.Option(None, "--agent", "-a", help=AGENT_HELP),
     set_value: list[str] | None = typer.Option(
         None, "--set", help="Override dotted KEY=VALUE."
     ),
     repo: Path = typer.Option(Path.cwd(), "--repo", help=REPO_HELP),
-    dry_run: bool = typer.Option(
-        False, "--dry-run", help=DRY_RUN_HELP
-    ),
+    dry_run: bool = typer.Option(False, "--dry-run", help=DRY_RUN_HELP),
     quiet: bool = typer.Option(False, "--quiet", "-q", help=QUIET_HELP),
     json_output: bool = typer.Option(False, "--json", help=JSON_HELP),
 ) -> None:
@@ -146,9 +140,7 @@ def update_command(
 @app.command("status")
 def status_command(
     ctx: typer.Context,
-    agent: list[str] | None = typer.Option(
-        None, "--agent", "-a", help=AGENT_HELP
-    ),
+    agent: list[str] | None = typer.Option(None, "--agent", "-a", help=AGENT_HELP),
     repo: Path = typer.Option(Path.cwd(), "--repo", help=REPO_HELP),
     quiet: bool = typer.Option(False, "--quiet", "-q", help=QUIET_HELP),
     json_output: bool = typer.Option(False, "--json", help=JSON_HELP),
@@ -158,44 +150,46 @@ def status_command(
     root = project_root(repo)
     scope = project_scope_root(root)
     rows: list[dict[str, Any]] = []
-    for adapter in selected(agent):
-        config = managed_config_path(adapter, scope)
-        merged, layers = resolve_config(adapter, "local", root)
-        artifacts = adapter.artifacts("local")
-        paths = [
-            (
-                artifact,
-                adapter.native_path("local", root, artifact),
-                adapter.native_path("local", root, artifact)
-                if artifact.root == "share"
-                else adapter.rendered_path(scope, "local", artifact),
-                content_hash(adapter.render_artifact(artifact, merged.config, "local")),
+    # Rendering and config parsing happen here, so failures must surface as the
+    # documented `error: ...` exit rather than a traceback.
+    with command_boundary():
+        for adapter in selected(agent):
+            config = managed_config_path(adapter, scope)
+            merged, layers = resolve_config(adapter, "local", root)
+            artifacts = adapter.artifacts("local")
+            paths = [
+                (
+                    artifact,
+                    adapter.native_path("local", root, artifact),
+                    adapter.native_path("local", root, artifact)
+                    if artifact.root == "share"
+                    else adapter.rendered_path(scope, "local", artifact),
+                    content_hash(
+                        adapter.render_artifact(artifact, merged.config, "local")
+                    ),
+                )
+                for artifact in artifacts
+            ]
+            native = adapter.local_native_path(root)
+            local_overrides = [
+                change.path
+                for change in layered_changes(layers)
+                if change.layer == "local"
+            ]
+            rows.append(
+                {
+                    "agent": adapter.name,
+                    "initialized": config.exists(),
+                    "rendered": all(
+                        rendered.exists()
+                        for artifact, _, rendered, _ in paths
+                        if not artifact.seed_only
+                    ),
+                    "native": str(native),
+                    "drift": any(artifact_drifted(*entry) for entry in paths),
+                    "local_overrides": local_overrides,
+                }
             )
-            for artifact in artifacts
-        ]
-        native = adapter.local_native_path(root)
-        local_overrides = [
-            change.path for change in layered_changes(layers) if change.layer == "local"
-        ]
-        rows.append(
-            {
-                "agent": adapter.name,
-                "initialized": config.exists(),
-                "rendered": all(rendered.exists() for _, _, rendered, _ in paths),
-                "native": str(native),
-                "drift": any(
-                    not rendered.exists()
-                    or not native_path.exists()
-                    or file_hash(native_path) != expected_hash
-                    or (
-                        artifact.root != "share"
-                        and file_hash(rendered) != expected_hash
-                    )
-                    for artifact, native_path, rendered, expected_hash in paths
-                ),
-                "local_overrides": local_overrides,
-            }
-        )
     if options(ctx)["json"]:
         emit(ctx, rows)
         return

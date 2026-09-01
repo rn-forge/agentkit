@@ -1,13 +1,13 @@
 """Inspect schemas, artifacts, templates, state, paths, and optional binaries.
 
-The shared doctor command invokes :func:`check_agent` for each selected adapter
-plus :func:`check_environment` once per scope, and reports warnings, errors, and
-native drift without mutating files.
+The shared doctor command invokes :func:`check_agent` for each selected adapter plus
+:func:`check_environment` once per scope, and reports warnings, errors, and native drift
+without mutating files.
 
 Every result carries a ``category`` so callers can group the report by concern
 (``config``, ``artifacts``, ``environment``, ``state``) while ``check`` stays the
-specific outcome. Each artifact contributes exactly one result — its worst
-finding — rather than separate existence, path, and drift rows.
+specific outcome. Each artifact contributes exactly one result — its worst finding —
+rather than separate existence, path, and drift rows.
 """
 
 from __future__ import annotations
@@ -19,6 +19,7 @@ from pathlib import Path
 from typing import Literal
 
 from ..agents.base import AgentAdapter
+from ..agents.registry import registry
 from .manager import resolve_config
 from .state import StateStore, content_hash, file_hash
 
@@ -30,7 +31,6 @@ CATEGORY_ORDER: tuple[Category, ...] = ("config", "artifacts", "environment", "s
 
 STATUS_ORDER: dict[Status, int] = {"error": 0, "drift": 1, "warning": 2, "ok": 3}
 """Display order within a section: most severe first."""
-
 
 @dataclass(frozen=True, slots=True)
 class CheckResult:
@@ -93,20 +93,35 @@ def check_agent(
         native = adapter.native_path(scope, repo_root, artifact)
         native_exists = native.exists()
 
+        if artifact.seed_only:
+            # Apply writes a seed file once and then never touches it again, so
+            # its content belongs to the user. Only existence is a finding here;
+            # comparing it against packaged content would report every ordinary
+            # edit to AGENTS.md or CLAUDE.md as drift.
+            if artifact.root != "share":
+                expected_rendered.add(
+                    adapter.rendered_path(scope_root, scope, artifact)
+                )
+            results.append(
+                _seed_result(adapter.name, artifact.key, native, native_exists)
+            )
+            continue
+
+        # Render the expected content once and compare *both* copies against it.
+        # Comparing the staged copy with the native copy alone reports two
+        # equally stale files as healthy whenever a template, a default, or a
+        # packaged asset changed after the last apply.
+        expected = content_hash(adapter.render_artifact(artifact, merged.config, scope))
+        differs = native_exists and file_hash(native) != expected
+
         if artifact.root == "share":
             rendered_exists = native_exists
-            differs = native_exists and file_hash(native) != content_hash(
-                adapter.render_artifact(artifact, merged.config, scope)
-            )
+            stale = False
         else:
             rendered = adapter.rendered_path(scope_root, scope, artifact)
             expected_rendered.add(rendered)
             rendered_exists = rendered.exists()
-            differs = (
-                rendered_exists
-                and native_exists
-                and file_hash(rendered) != file_hash(native)
-            )
+            stale = rendered_exists and file_hash(rendered) != expected
 
         results.append(
             _artifact_result(
@@ -116,6 +131,7 @@ def check_agent(
                 native_exists,
                 rendered_exists,
                 differs,
+                stale,
             )
         )
 
@@ -153,6 +169,21 @@ def check_agent(
     return results
 
 
+def _seed_result(
+    agent: str, key: str, native: Path, native_exists: bool
+) -> CheckResult:
+    """Report a user-owned seed file by existence alone.
+
+    Seed artifacts are written once and then owned by the user, so there is no expected
+    content to compare against after the initial write.
+    """
+    if native_exists:
+        return CheckResult("ok", agent, "artifacts", "seed", f"{key}: seeded")
+    return CheckResult(
+        "warning", agent, "artifacts", "native", f"{key}: missing: {native}"
+    )
+
+
 def _artifact_result(
     agent: str,
     key: str,
@@ -160,12 +191,14 @@ def _artifact_result(
     native_exists: bool,
     rendered_exists: bool,
     differs: bool,
+    stale: bool = False,
 ) -> CheckResult:
     """Collapse one artifact's path, existence, and drift findings into a row.
 
     Reports the most severe finding only: an unwritable parent directory blocks
-    every later repair, drift matters more than absence, and a native file that
-    was rendered but never synced is distinct from one that was never rendered.
+    every later repair, native drift matters more than stale staging, drift
+    matters more than absence, and a native file that was rendered but never
+    synced is distinct from one that was never rendered.
     """
     parent = native.parent
     writable_parent = next(
@@ -178,6 +211,14 @@ def _artifact_result(
     if differs:
         return CheckResult(
             "drift", agent, "artifacts", "drift", f"{key}: differs: {native}"
+        )
+    if stale:
+        return CheckResult(
+            "drift",
+            agent,
+            "artifacts",
+            "stale",
+            f"{key}: staged copy is out of date; run apply: {native}",
         )
     if not native_exists:
         if rendered_exists:
@@ -213,6 +254,18 @@ def check_environment(
         Ordered diagnostic results with no owning agent.
     """
     results: list[CheckResult] = []
+    # A plugin that failed to load is skipped rather than fatal (see
+    # AgentRegistry.discover); doctor is where that becomes visible.
+    results.extend(
+        CheckResult(
+            "error",
+            None,
+            "environment",
+            "plugin",
+            f"adapter entry point {error.entry_point!r} failed to load: {error.reason}",
+        )
+        for error in registry.errors
+    )
     if shutil.which("jq"):
         results.append(CheckResult("ok", None, "environment", "dependency", "jq"))
     else:

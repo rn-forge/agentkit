@@ -9,6 +9,18 @@
 
 set -euo pipefail
 
+# Check every prerequisite up front. Failing on the first missing tool halfway
+# through a download leaves a confusing partial state and a worse error.
+missing=""
+for tool in curl tar uv; do
+  command -v "${tool}" >/dev/null 2>&1 || missing="${missing} ${tool}"
+done
+if [ -n "${missing}" ]; then
+  echo "bootstrap.sh: missing required tool(s):${missing}" >&2
+  echo "  install them first — see https://rn-forge.github.io/agentkit/guides/development/#external-dependencies" >&2
+  exit 1
+fi
+
 repo="rn-forge/agentkit"
 work_dir="$(mktemp -d)"
 trap 'rm -rf "${work_dir}"' EXIT

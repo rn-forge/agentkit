@@ -1,7 +1,7 @@
 """Read, update, serialize, and atomically replace managed files.
 
-TOML and YAML document helpers preserve comments for future write-back, while
-plain mapping helpers form the typed boundary consumed by adapters and config.
+TOML and YAML document helpers preserve comments for future write-back, while plain
+mapping helpers form the typed boundary consumed by adapters and config.
 """
 
 from __future__ import annotations
@@ -170,6 +170,20 @@ def atomic_write(path: Path, content: str | bytes, mode: int | None = None) -> N
     except Exception:
         Path(temporary).unlink(missing_ok=True)
         raise
+    # Fsyncing the file only durably records its *contents*; the rename that
+    # makes those contents visible under `path` lives in the parent directory,
+    # so that has to be synced too or a crash can leave the old name. Not every
+    # platform or filesystem permits opening a directory, hence best effort.
+    try:
+        directory = os.open(path.parent, os.O_RDONLY)
+    except OSError:
+        return
+    try:
+        os.fsync(directory)
+    except OSError:
+        pass
+    finally:
+        os.close(directory)
 
 
 def _to_plain(value: Any) -> Any:

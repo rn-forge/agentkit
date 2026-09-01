@@ -31,11 +31,15 @@ tasks:
       - uv run --group docs python scripts/check-docs.py .
 
   format:python:
-    desc: Format src/ and tests/ in place with ruff.
+    desc: Format src/ and tests/ in place with ruff and docformatter.
     internal: true
     cmds:
       - uv run ruff format src tests
       - uv run ruff check --fix src tests
+      # docformatter exits 3 whenever it rewrites a file, even in --in-place
+      # mode, so a successful reformat must not fail this task.
+      - cmd: uv run docformatter --in-place --recursive src tests
+        ignore_error: true
 
   typecheck:python:
     desc: Type-check src/ with pyright in strict mode.

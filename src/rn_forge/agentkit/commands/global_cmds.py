@@ -1,7 +1,7 @@
 """Implement global apply, sync, reset, and status-list workflows.
 
-These Typer commands select adapters and delegate file operations to the core
-manager beneath ``$RNF_HOME/share/agentkit``.
+These Typer commands select adapters and delegate file operations to the core manager
+beneath ``$RNF_HOME/share/agentkit``.
 """
 
 from __future__ import annotations
@@ -13,6 +13,7 @@ from rich.table import Table
 
 from ..core.config import parse_cli_overrides
 from ..core.manager import (
+    artifact_drifted,
     apply_adapter,
     managed_config_path,
     project_root,
@@ -21,8 +22,9 @@ from ..core.manager import (
     sync_adapter,
 )
 from ..core.paths import global_root
-from ..core.state import content_hash, file_hash
+from ..core.state import content_hash
 from .common import (
+    command_boundary,
     AGENT_HELP,
     DRY_RUN_HELP,
     JSON_HELP,
@@ -43,15 +45,11 @@ app = typer.Typer(help="Manage user-wide agent configuration.", no_args_is_help=
 @app.command("apply")
 def apply_command(
     ctx: typer.Context,
-    agent: list[str] | None = typer.Option(
-        None, "--agent", "-a", help=AGENT_HELP
-    ),
+    agent: list[str] | None = typer.Option(None, "--agent", "-a", help=AGENT_HELP),
     set_value: list[str] | None = typer.Option(
         None, "--set", help="Override dotted KEY=VALUE."
     ),
-    dry_run: bool = typer.Option(
-        False, "--dry-run", help=DRY_RUN_HELP
-    ),
+    dry_run: bool = typer.Option(False, "--dry-run", help=DRY_RUN_HELP),
     quiet: bool = typer.Option(False, "--quiet", "-q", help=QUIET_HELP),
     json_output: bool = typer.Option(False, "--json", help=JSON_HELP),
 ) -> None:
@@ -75,12 +73,8 @@ def apply_command(
 @app.command("sync")
 def sync_command(
     ctx: typer.Context,
-    agent: list[str] | None = typer.Option(
-        None, "--agent", "-a", help=AGENT_HELP
-    ),
-    dry_run: bool = typer.Option(
-        False, "--dry-run", help=DRY_RUN_HELP
-    ),
+    agent: list[str] | None = typer.Option(None, "--agent", "-a", help=AGENT_HELP),
+    dry_run: bool = typer.Option(False, "--dry-run", help=DRY_RUN_HELP),
     quiet: bool = typer.Option(False, "--quiet", "-q", help=QUIET_HELP),
     json_output: bool = typer.Option(False, "--json", help=JSON_HELP),
 ) -> None:
@@ -100,13 +94,9 @@ def sync_command(
 @app.command("reset")
 def reset_command(
     ctx: typer.Context,
-    agent: list[str] | None = typer.Option(
-        None, "--agent", "-a", help=AGENT_HELP
-    ),
+    agent: list[str] | None = typer.Option(None, "--agent", "-a", help=AGENT_HELP),
     yes: bool = typer.Option(False, "--yes", "-y", help="Skip confirmation."),
-    dry_run: bool = typer.Option(
-        False, "--dry-run", help=DRY_RUN_HELP
-    ),
+    dry_run: bool = typer.Option(False, "--dry-run", help=DRY_RUN_HELP),
     quiet: bool = typer.Option(False, "--quiet", "-q", help=QUIET_HELP),
     json_output: bool = typer.Option(False, "--json", help=JSON_HELP),
 ) -> None:
@@ -137,41 +127,40 @@ def list_command(
     """List managed adapters and their global status."""
     command_options(ctx, quiet=quiet, json_output=json_output)
     rows: list[dict[str, Any]] = []
-    for adapter in selected(None):
-        config = managed_config_path(adapter, global_root())
-        merged, _ = resolve_config(adapter, "global", project_root())
-        artifacts = adapter.artifacts("global")
-        paths = [
-            (
-                artifact,
-                adapter.native_path("global", project_root(), artifact),
-                adapter.native_path("global", project_root(), artifact)
-                if artifact.root == "share"
-                else adapter.rendered_path(global_root(), "global", artifact),
-                content_hash(
-                    adapter.render_artifact(artifact, merged.config, "global")
-                ),
+    # Rendering and config parsing happen here, so failures must surface as the
+    # documented `error: ...` exit rather than a traceback.
+    with command_boundary():
+        for adapter in selected(None):
+            config = managed_config_path(adapter, global_root())
+            merged, _ = resolve_config(adapter, "global", project_root())
+            artifacts = adapter.artifacts("global")
+            paths = [
+                (
+                    artifact,
+                    adapter.native_path("global", project_root(), artifact),
+                    adapter.native_path("global", project_root(), artifact)
+                    if artifact.root == "share"
+                    else adapter.rendered_path(global_root(), "global", artifact),
+                    content_hash(
+                        adapter.render_artifact(artifact, merged.config, "global")
+                    ),
+                )
+                for artifact in artifacts
+            ]
+            native = adapter.global_native_path()
+            rows.append(
+                {
+                    "agent": adapter.name,
+                    "configured": config.exists(),
+                    "rendered": all(
+                        rendered.exists()
+                        for artifact, _, rendered, _ in paths
+                        if not artifact.seed_only
+                    ),
+                    "native": str(native),
+                    "in_sync": not any(artifact_drifted(*entry) for entry in paths),
+                }
             )
-            for artifact in artifacts
-        ]
-        native = adapter.global_native_path()
-        rows.append(
-            {
-                "agent": adapter.name,
-                "configured": config.exists(),
-                "rendered": all(rendered.exists() for _, _, rendered, _ in paths),
-                "native": str(native),
-                "in_sync": all(
-                    rendered.exists()
-                    and native_path.exists()
-                    and file_hash(native_path) == expected_hash
-                    and (
-                        artifact.root == "share" or file_hash(rendered) == expected_hash
-                    )
-                    for artifact, native_path, rendered, expected_hash in paths
-                ),
-            }
-        )
     if options(ctx)["json"]:
         emit(ctx, rows)
         return

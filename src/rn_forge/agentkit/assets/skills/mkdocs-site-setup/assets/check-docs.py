@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
-"""Validate the docs/ tree: broken relative links, broken heading anchors, and
-orphan pages unreachable from mkdocs.yml's nav.
+"""Validate the docs/ tree: broken relative links, broken heading anchors, and orphan
+pages unreachable from mkdocs.yml's nav.
 
-Generic template: works for any MkDocs site where mkdocs.yml's `nav` is the
-single source of page structure. Generated-and-gitignored subtrees under
-docs/ (e.g. TypeDoc/mkdocstrings output) are auto-detected from .gitignore
-entries anchored under docs/ — pages under them may not exist until the doc
-generators run, and links/anchors into them aren't checked.
+Generic template: works for any MkDocs site where mkdocs.yml's `nav` is the single
+source of page structure. Generated-and-gitignored subtrees under docs/ (e.g.
+TypeDoc/mkdocstrings output) are auto-detected from .gitignore entries anchored under
+docs/ — pages under them may not exist until the doc generators run, and links/anchors
+into them aren't checked.
 """
 
 from __future__ import annotations
@@ -39,8 +39,10 @@ def slugify(header: str) -> str:
 
 
 def generated_prefixes() -> list[Path]:
-    """Directories under docs/ that are gitignored — generator output, not
-    handwritten. A nav entry or link pointing here may not exist pre-build."""
+    """Directories under docs/ that are gitignored — generator output, not handwritten.
+
+    A nav entry or link pointing here may not exist pre-build.
+    """
     if not GITIGNORE.exists():
         return []
     prefixes = []
@@ -126,8 +128,8 @@ def linked_pages(path: Path) -> set[Path]:
 
 
 def check_orphans() -> list[str]:
-    """A page is reachable if it's in mkdocs.yml's nav, or linked to
-    (transitively) from a page that is."""
+    """A page is reachable if it's in mkdocs.yml's nav, or linked to (transitively) from
+    a page that is."""
     frontier = [(DOCS_DIR / p).resolve() for p in nav_paths() if (DOCS_DIR / p).resolve().exists()]
     reachable = set(frontier)
     while frontier:

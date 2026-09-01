@@ -30,9 +30,11 @@ def test_both_agents_ship_the_same_skill_set_under_native_roots() -> None:
 
 
 def test_bundled_resources_copy_verbatim_and_keep_foreign_placeholders() -> None:
-    """go-task `{{.VAR}}` and Actions `${{ }}` must not be rendered as Jinja."""
+    """Go-task `{{.VAR}}` and Actions `${{ }}` must not be rendered as Jinja."""
     adapter = ClaudeAdapter()
-    workflow = _skills(adapter)["skills/mkdocs-site-setup/assets/docs-deploy.yml.template"]
+    workflow = _skills(adapter)[
+        "skills/mkdocs-site-setup/assets/docs-deploy.yml.template"
+    ]
 
     assert workflow.template is None
     assert workflow.source is not None

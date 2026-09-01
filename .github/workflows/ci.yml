@@ -47,6 +47,12 @@ jobs:
       - name: Test
         run: task test
 
+      # A strict MkDocs build catches broken mkdocstrings imports and nav
+      # errors that the link linter cannot see. It runs here rather than only
+      # in the deploy workflow so a docs break cannot merge first.
+      - name: Docs build
+        run: task docs:build
+
   sonar:
     needs: validate
     runs-on: ubuntu-latest

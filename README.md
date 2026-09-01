@@ -31,10 +31,11 @@ does not edit shell rc files.
 
 ### Setting up a new machine
 
-1. Install prerequisites: `jq` (required by every hook) and, optionally,
-   `gitleaks` for prompt-secret scanning — see
+1. Install prerequisites. The bootstrap itself needs `curl`, `tar`, and
+   [`uv`](https://docs.astral.sh/uv/getting-started/installation/); the hooks
+   need `jq`, and `gitleaks` is optional for prompt-secret scanning. See
    [the dependency table](docs/guides/development.md#external-dependencies)
-   for exact package names per OS.
+   for what each one is used for and how to install it.
 2. Install agentkit — no manual clone needed. `bootstrap.sh` downloads the
    source tarball for the latest GitHub release and runs the installer from
    it:
@@ -138,8 +139,8 @@ for a live-reloading local preview.
 
 ```bash
 task setup       # sync the venv with the dev and docs dependency groups
-task validate    # the gate: lint + typecheck + test
-task docs:serve  # live-reloading docs on http://127.0.0.1:8000
+task validate    # the gate: lint + typecheck + test + docs build
+task docs:serve  # live-reloading docs on http://127.0.0.1:8083
 task --list      # the full surface
 ```
 

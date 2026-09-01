@@ -15,6 +15,10 @@ isn't already there, plus pointers instead of duplication:
   source layout.
 - [docs/specs/initial.md](docs/specs/initial.md) — the historical design record:
   decisions, full build history, and §13 for what's pending.
+- [docs/architecture/safety-model.md](docs/architecture/safety-model.md) — what
+  the guards, apply, and install paths do and do not promise, and why. Read it
+  before "hardening" a hook or an apply path; several apparent gaps are
+  deliberate and recorded there.
 - [docs/architecture/docs-system.md](docs/architecture/docs-system.md) — how and
   why the docs site is built; update it when the docs tooling changes.
 - [docs/guides/task-vocabulary.md](docs/guides/task-vocabulary.md) — the task
@@ -59,13 +63,32 @@ the `isolated_env` fixture in `tests/conftest.py` sets both `HOME` and
   never raw shell); every task carries a non-empty `desc:`.
   `scripts/check_task_layout.py` enforces those two rules. See
   [docs/guides/task-vocabulary.md](docs/guides/task-vocabulary.md).
+- Deliberate trade-offs in the tooling (test lint exclusions, no coverage
+  floor, `.editorconfig` defaults, the Python floor, release triggering) are
+  recorded under "Deliberate trade-offs" in
+  [docs/guides/development.md](docs/guides/development.md). Extend that section
+  rather than re-litigating them.
 - Docs prose lives in `docs/` and is linked, never duplicated, from README.
   `mkdocs.yml`'s `nav` is the source of page structure — a new page that isn't
   in `nav` fails `task lint` as an orphan.
+- Artifact and operation-result ordering (`AgentAdapter.artifacts()`,
+  `apply_adapter()`/`sync_adapter()`/`reset_adapter()` return lists) is not a
+  tested contract — don't write or accept a test that indexes into these
+  lists (`results[0]`, `artifacts("global")[0]`) to mean "the config one."
+  Select by `.key` / `.artifact` instead (see `_result_for` helpers in
+  `tests/core/test_manager.py` and `tests/core/test_doctor.py`). An
+  index-based test breaks on any unrelated reordering and either has to be
+  fixed blind or becomes a reason to avoid a reordering that's otherwise fine.
+- `uv_build` packages whatever is on disk under `src/`, not what's tracked by
+  git — a gitignored file (`.DS_Store`, a stray `__pycache__`) can still ship
+  in a wheel. `task build` runs `scripts/check_dist_contents.py` after every
+  build for this reason; extend its disallow list rather than adding a
+  one-off cleanup step if a new junk-file class shows up.
 
 ## Before reporting work done
 
 Run the narrowest relevant slice of the task vocabulary — `task test`,
-`task lint`, `task typecheck`, or `task validate` for all three. The
+`task lint`, `task typecheck`, or `task validate` for the full gate
+(lint + typecheck + test + docs build). The
 `UV_CACHE_DIR` handling that used to have to be remembered by hand is now in
 `Taskfile.yml`; don't reintroduce raw `uv run` invocations to work around it.

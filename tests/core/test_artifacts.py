@@ -33,9 +33,7 @@ class ExampleAdapter(AgentAdapter):
             ),
         ]
 
-    def render(
-        self, merged_config: dict[str, Any], *, scope: Scope = "global"
-    ) -> str:
+    def render(self, merged_config: dict[str, Any], *, scope: Scope = "global") -> str:
         return f"value={merged_config['value']}\n"
 
     def parse_native(self, path: Path) -> dict[str, Any]:

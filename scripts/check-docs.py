@@ -7,6 +7,13 @@ single source of page structure. Generated-and-gitignored subtrees under
 docs/ (e.g. TypeDoc/mkdocstrings output) are auto-detected from .gitignore
 entries anchored under docs/ — pages under them may not exist until the doc
 generators run, and links/anchors into them aren't checked.
+
+Scope, stated precisely so the guarantee is not overread: this checks *inline*
+Markdown links (`[text](target)`) to other Markdown pages, plus their heading
+anchors. It does NOT check reference-style links, images or other non-Markdown
+local targets, or external URLs. A green run means "no broken internal page
+links", not "every link resolves". Widening it means adopting a real link
+checker rather than growing this script.
 """
 
 from __future__ import annotations

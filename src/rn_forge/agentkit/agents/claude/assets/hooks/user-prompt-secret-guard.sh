@@ -9,7 +9,12 @@ LIB="${0%/*}/../../_common/hooks/guard-core.sh"
 guard_require_jq_plain "user-prompt-secret-guard" warn
 
 INPUT=$(cat)
-PROMPT=$(printf '%s' "$INPUT" | jq -r '.prompt // ""')
+# Deliberately advisory: a malformed prompt event enables no destructive action,
+# so warn rather than block the user's turn. Command and write guards differ.
+if ! guard_event_field "$INPUT" '.prompt'; then
+  guard_emit_plain "user-prompt-secret-guard" "hook event was not valid JSON; prompt secret scan skipped." 1
+fi
+PROMPT="$GUARD_FIELD"
 
 if REASON=$(guard_check_prompt_secrets "$PROMPT"); then
   exit 0

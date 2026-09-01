@@ -26,6 +26,7 @@ nav:
   - Architecture:
       - Overview: architecture/index.md
       - Adapters and artifacts: architecture/adapters.md
+      - Safety model: architecture/safety-model.md
       - Documentation system: architecture/docs-system.md
   - Guides:
       - Development: guides/development.md

@@ -1,7 +1,7 @@
 """Implement Codex TOML rendering and default-pack artifacts.
 
-The adapter combines the Codex schema, packaged scope defaults, Jinja TOML
-templates, native ``.codex`` paths, and shared hooks.
+The adapter combines the Codex schema, packaged scope defaults, Jinja TOML templates,
+native ``.codex`` paths, and shared hooks.
 """
 
 from __future__ import annotations
@@ -42,20 +42,11 @@ class CodexAdapter(AgentAdapter):
             native_relative=Path(".codex") / "config.toml",
             template=f"{scope}.j2",
         )
+        # `hooks.json` is declared after the shared hook scripts it points at
+        # by path, so a written `hooks.json` never lands pointing at a script
+        # that does not exist yet.
         if scope == "local":
             return [
-                config,
-                Artifact(
-                    _AGENTS_MD,
-                    Path(_AGENTS_MD),
-                    template="AGENTS.local.md.j2",
-                    seed_only=True,
-                ),
-                Artifact(
-                    _HOOKS_JSON,
-                    Path(".codex/hooks.json"),
-                    source=self._assets_dir / "hooks.local.json",
-                ),
                 Artifact(
                     key="hooks/post-edit-format.sh",
                     native_relative=Path("codex/hooks/post-edit-format.sh"),
@@ -63,19 +54,20 @@ class CodexAdapter(AgentAdapter):
                     source=self._shared_scripts_dir / "post-edit-format.sh",
                     executable=True,
                 ),
+                Artifact(
+                    _HOOKS_JSON,
+                    Path(".codex/hooks.json"),
+                    source=self._assets_dir / "hooks.local.json",
+                ),
+                config,
+                Artifact(
+                    _AGENTS_MD,
+                    Path(_AGENTS_MD),
+                    template="AGENTS.local.md.j2",
+                    seed_only=True,
+                ),
             ]
         return [
-            config,
-            Artifact(
-                _AGENTS_MD,
-                Path(".codex/AGENTS.md"),
-                template="AGENTS.md.j2",
-            ),
-            Artifact(
-                _HOOKS_JSON,
-                Path(".codex/hooks.json"),
-                source=self._assets_dir / _HOOKS_JSON,
-            ),
             Artifact(
                 "hooks/guard-core.sh",
                 Path("_common/hooks/guard-core.sh"),
@@ -108,6 +100,17 @@ class CodexAdapter(AgentAdapter):
                 Path("codex/hooks/unwrap_md.py"),
                 root="share",
                 source=self._shared_scripts_dir / "unwrap_md.py",
+            ),
+            Artifact(
+                _HOOKS_JSON,
+                Path(".codex/hooks.json"),
+                source=self._assets_dir / _HOOKS_JSON,
+            ),
+            config,
+            Artifact(
+                _AGENTS_MD,
+                Path(".codex/AGENTS.md"),
+                template="AGENTS.md.j2",
             ),
             *self.skill_artifacts(self._skills_dir),
         ]

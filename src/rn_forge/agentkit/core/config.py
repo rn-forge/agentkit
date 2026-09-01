@@ -1,7 +1,7 @@
 """Merge adapter configuration layers and retain per-key provenance.
 
-The manager uses :class:`ConfigMerger` for defaults, managed sources, and CLI
-overrides; adapter schemas supply field-specific list merge strategies.
+The manager uses :class:`ConfigMerger` for defaults, managed sources, and CLI overrides;
+adapter schemas supply field-specific list merge strategies.
 """
 
 from __future__ import annotations
@@ -58,9 +58,9 @@ class ConfigMerger:
     ) -> MergeResult:
         """Merge mappings or ``(name, mapping)`` pairs.
 
-        Unnamed layers use the conventional names defaults, global, local,
-        overrides, then layer-N. Dictionaries merge recursively; lists replace
-        unless their dotted field path is marked with ``merge_strategy=append``.
+        Unnamed layers use the conventional names defaults, global, local, overrides,
+        then layer-N. Dictionaries merge recursively; lists replace unless their dotted
+        field path is marked with ``merge_strategy=append``.
         """
         conventional = ("defaults", "global", "local", "overrides")
         named: list[tuple[str, Mapping[str, Any]]] = []

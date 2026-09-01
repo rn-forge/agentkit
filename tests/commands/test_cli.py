@@ -18,6 +18,44 @@ def test_version_json() -> None:
     assert set(data["adapters"]) == {"claude", "codex"}
 
 
+def test_unknown_agent_under_json_emits_a_json_error_object(isolated_env) -> None:
+    _, _, repo = isolated_env
+    result = runner.invoke(
+        app,
+        [
+            "--json",
+            "project",
+            "status",
+            "--agent",
+            "no-such-agent",
+            "--repo",
+            str(repo),
+        ],
+    )
+    assert result.exit_code != 0
+    payload = json.loads(result.stdout)
+    assert "no-such-agent" in payload["error"]["message"]
+
+
+def test_conflicting_output_flags_under_json_emit_a_json_error_object() -> None:
+    result = runner.invoke(app, ["--json", "--quiet", "version"])
+    assert result.exit_code != 0
+    payload = json.loads(result.stdout)
+    assert "mutually exclusive" in payload["error"]["message"]
+
+
+def test_conflicting_output_flags_after_command_under_json_emit_a_json_error_object(
+    isolated_env,
+) -> None:
+    _, _, repo = isolated_env
+    result = runner.invoke(
+        app, ["project", "status", "--repo", str(repo), "--json", "--quiet"]
+    )
+    assert result.exit_code != 0
+    payload = json.loads(result.stdout)
+    assert "mutually exclusive" in payload["error"]["message"]
+
+
 def test_project_init_update_status(isolated_env) -> None:
     _, _, repo = isolated_env
 
@@ -144,8 +182,16 @@ def test_diff_check_uses_exit_code_two(isolated_env) -> None:
     assert result.exit_code == 2
 
 
-def test_doctor_hides_passing_checks_until_all_is_passed(isolated_env) -> None:
+def test_doctor_hides_passing_checks_until_all_is_passed(
+    isolated_env, monkeypatch
+) -> None:
+    """Whether a check is hidden must not depend on the host's installed tools.
+
+    Every optional binary is reported as missing so the report always contains at least
+    one warning and the summary line is deterministic.
+    """
     _, _, repo = isolated_env
+    _fake_binaries(monkeypatch, present=())
     runner.invoke(app, ["global", "apply", "--agent", "codex"])
 
     default = runner.invoke(app, ["doctor", "--scope", "global", "--agent", "codex"])
@@ -156,6 +202,30 @@ def test_doctor_hides_passing_checks_until_all_is_passed(isolated_env) -> None:
     assert "configuration is valid" not in default.stdout
     assert "--all to show" in default.stdout
     assert "configuration is valid" in verbose.stdout
+
+
+def test_doctor_summarizes_a_fully_passing_report(isolated_env, monkeypatch) -> None:
+    """With every optional binary present there is nothing to hide."""
+    _, _, repo = isolated_env
+    _fake_binaries(monkeypatch, present=("jq", "gitleaks", "codex", "claude"))
+    runner.invoke(app, ["global", "apply", "--agent", "codex"])
+
+    result = runner.invoke(app, ["doctor", "--scope", "global", "--agent", "codex"])
+
+    assert "checks passed" in result.stdout
+    assert "--all to show" not in result.stdout
+
+
+def _fake_binaries(monkeypatch, present: tuple[str, ...]) -> None:
+    """Pin optional-binary discovery so doctor output does not depend on PATH."""
+    real_which = shutil.which
+
+    def fake_which(cmd: str, *args, **kwargs) -> str | None:
+        if cmd in ("jq", "gitleaks", "codex", "claude"):
+            return f"/usr/bin/{cmd}" if cmd in present else None
+        return real_which(cmd, *args, **kwargs)
+
+    monkeypatch.setattr(shutil, "which", fake_which)
 
 
 def test_doctor_json_reports_every_check_with_a_category(isolated_env) -> None:

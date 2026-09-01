@@ -12,8 +12,10 @@ An artifact declares:
   or a packaged static file copied verbatim.
 - **A root** — the agent root (`~/.claude`, `<repo>/.codex`, …) or the shared
   root (`_common/`, for assets more than one agent depends on).
-- **A stable key** — the identity used in `state.json` for hash tracking, so
-  renaming a destination path doesn't orphan its applied-hash record.
+- **A stable key** — the identity used in command output, diffs, and doctor
+  rows. Note that `state.json` is keyed by *resolved native path*, not by this
+  key: renaming a destination therefore does orphan its applied-hash record,
+  which `doctor` reports as a stale entry.
 - **A native-relative path** — where it lands under that root.
 - **An optional executable mode** — hook scripts need `+x`; configs don't.
 
@@ -51,8 +53,17 @@ Publish the adapter under the `agentkit.adapters` entry-point group:
 my-agent = "my_package:MyAgentAdapter"
 ```
 
-Built-in adapters are registered the same way, so a third-party adapter is not a
-second-class citizen — there is no separate plugin path to keep working.
+Built-in adapters (`claude`, `codex`) are constructed directly by the registry
+rather than loaded through this group, so agentkit works with no metadata to
+read. Third-party adapters share everything after loading: the same
+`AgentAdapter` contract, the same artifact and scope handling, the same
+commands.
+
+Their names are reserved. A discovered adapter is rejected — with the reason
+reported by `doctor` — when it claims a built-in name, uses a name that is not
+a safe directory segment, or declares duplicate artifact keys or destinations.
+A plugin that fails to import is skipped and reported rather than fatal, so one
+broken package cannot take down `--help` or the other agents.
 
 ## Reference
 

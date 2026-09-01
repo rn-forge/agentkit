@@ -21,11 +21,11 @@ def test_claude_render_and_parse(tmp_path) -> None:
 
 def test_claude_artifacts_and_scope_defaults() -> None:
     adapter = ClaudeAdapter()
+    # Hook scripts are declared before `config`, which the packaged defaults
+    # point at by path, so a written config never lands pointing at a script
+    # that does not exist yet.
     global_keys = [artifact.key for artifact in adapter.artifacts("global")]
     assert global_keys[:10] == [
-        "config",
-        "CLAUDE.md",
-        "output-styles/concise.md",
         "hooks/guard-core.sh",
         "hooks/pre-bash-guard.sh",
         "hooks/user-prompt-secret-guard.sh",
@@ -33,6 +33,9 @@ def test_claude_artifacts_and_scope_defaults() -> None:
         "hooks/session-compact-context.sh",
         "hooks/post-write-unwrap-md.sh",
         "hooks/unwrap_md.py",
+        "config",
+        "CLAUDE.md",
+        "output-styles/concise.md",
     ]
     skill_keys = global_keys[10:]
     assert skill_keys
@@ -41,9 +44,9 @@ def test_claude_artifacts_and_scope_defaults() -> None:
     assert "skills/mkdocs-site-setup/SKILL.md" in skill_keys
     assert "skills/sonar-cleanup/SKILL.md" in skill_keys
     assert [artifact.key for artifact in adapter.artifacts("local")] == [
+        "hooks/post-edit-format.sh",
         "config",
         "CLAUDE.md",
-        "hooks/post-edit-format.sh",
     ]
     seed = next(
         artifact

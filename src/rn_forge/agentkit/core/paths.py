@@ -1,7 +1,7 @@
 """Resolve rn-forge global and repository-local working-data paths.
 
-The manager and adapters share these helpers so ``RNF_HOME`` overrides remain
-consistent across managed sources, shared hooks, staging, state, and backups.
+The manager and adapters share these helpers so ``RNF_HOME`` overrides remain consistent
+across managed sources, shared hooks, staging, state, and backups.
 """
 
 from __future__ import annotations

@@ -4,12 +4,15 @@
 Preserved verbatim: YAML front matter, fenced code, tables, headings, blank lines.
 Verified: the whitespace-normalised document must be identical before and after.
 """
+
 import re
 import sys
 import pathlib
 
-MARKER = re.compile(r'^(\s*)([-*+]|\d+\.)\s+')
-VERBATIM = re.compile(r'^(#{1,6}\s|\||```|>)')
+MARKER = re.compile(r"^(\s*)([-*+]|\d+\.)\s+")
+VERBATIM = re.compile(r"^(#{1,6}\s|\||```|>)")
+SETEXT_UNDERLINE = re.compile(r"^(=+|-+)\s*$")
+INDENTED_CODE = re.compile(r"^( {4}|\t)")
 
 
 def unwrap(text: str) -> str:
@@ -56,6 +59,28 @@ def unwrap(text: str) -> str:
             out.append(ln.rstrip())
             i += 1
             continue
+        # An indented code block (4 spaces / tab, opened at a blank line or
+        # the start of the file) is verbatim text, not a wrappable
+        # paragraph — joining its lines would turn code into prose.
+        if INDENTED_CODE.match(ln) and (i == 0 or not lines[i - 1].strip()):
+            flush()
+            while i < n and (INDENTED_CODE.match(lines[i]) or not lines[i].strip()):
+                out.append(lines[i])
+                i += 1
+            continue
+        # A setext heading (`Heading` underlined by `===`/`---`) reads the
+        # same as an ordinary paragraph line; joining it with its underline
+        # would silently turn the heading into a plain paragraph.
+        if (
+            not buf
+            and ln.strip()
+            and i + 1 < n
+            and SETEXT_UNDERLINE.match(lines[i + 1])
+        ):
+            out.append(ln.rstrip())
+            out.append(lines[i + 1].rstrip())
+            i += 2
+            continue
         m = MARKER.match(ln)
         if m:
             flush()
@@ -78,11 +103,11 @@ def unwrap(text: str) -> str:
         buf.append(ln)
         i += 1
     flush()
-    return re.sub(r'\n{3,}', '\n\n', "\n".join(out))
+    return re.sub(r"\n{3,}", "\n\n", "\n".join(out))
 
 
 def norm(s: str) -> str:
-    return re.sub(r'\s+', ' ', s).strip()
+    return re.sub(r"\s+", " ", s).strip()
 
 
 def main() -> None:
@@ -92,8 +117,10 @@ def main() -> None:
     if not path.exists():
         return
     src = path.read_text()
-    if re.search(r'\S  +\n', src):
-        print(f"unwrap: {path.name}: hard line break present — skipped", file=sys.stderr)
+    if re.search(r"\S  +\n", src):
+        print(
+            f"unwrap: {path.name}: hard line break present — skipped", file=sys.stderr
+        )
         return
     dst = unwrap(src)
     if norm(src) != norm(dst):

@@ -24,7 +24,7 @@ class Artifact:
 
     Raises:
         ValueError: Both or neither content sources are set, or the native path
-            is absolute.
+            is absolute, escapes its root, or is empty.
     """
 
     key: str
@@ -38,5 +38,18 @@ class Artifact:
     def __post_init__(self) -> None:
         if (self.template is None) == (self.source is None):
             raise ValueError("Artifact requires exactly one of template or source")
+        if not self.key.strip():
+            raise ValueError("Artifact key must be a non-empty identifier")
         if self.native_relative.is_absolute():
             raise ValueError("Artifact native_relative must be relative")
+        # A relative path is not automatically an in-root path: a third-party
+        # adapter declaring `../../.ssh/config` would otherwise write outside
+        # the agent or share root the destination is resolved against.
+        parts = self.native_relative.parts
+        if not parts:
+            raise ValueError("Artifact native_relative must not be empty")
+        if ".." in parts:
+            raise ValueError(
+                f"Artifact native_relative must not traverse upwards: "
+                f"{self.native_relative}"
+            )

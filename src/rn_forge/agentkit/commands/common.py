@@ -1,13 +1,15 @@
 """Share adapter selection, output modes, JSON conversion, and CLI failures.
 
-Global, project, and shared command groups use these helpers to keep quiet,
-Rich, and machine-readable output behavior consistent.
+Global, project, and shared command groups use these helpers to keep quiet, Rich, and
+machine-readable output behavior consistent.
 """
 
 from __future__ import annotations
 
 import json
 import shutil
+from collections.abc import Generator
+from contextlib import contextmanager
 from dataclasses import asdict, is_dataclass
 from pathlib import Path
 from typing import Any, NoReturn, cast
@@ -20,12 +22,28 @@ from ..agents.registry import registry
 from ..core.manager import OperationResult
 
 console = Console()
+error_console = Console(stderr=True)
+"""Human-readable diagnostics go to stderr, never to a caller's parsed stdout."""
+
+_json_mode = False
+"""Mirror of the active --json flag for helpers that receive no Typer context."""
 
 AGENT_HELP = "Agent(s); default is all."
 DRY_RUN_HELP = "Show changes without writing."
 QUIET_HELP = "Suppress output."
 JSON_HELP = "Emit JSON."
 REPO_HELP = "Repository directory."
+
+
+def set_json_mode(value: bool) -> None:
+    """Set the module-wide JSON mode used by :func:`fail` before a Typer context exists.
+
+    The root callback resolves ``--json`` before any command-level context or
+    ``command_options`` call exists, but a root-level parameter conflict must still fail
+    through the JSON error contract when ``--json`` was passed.
+    """
+    global _json_mode
+    _json_mode = value
 
 
 def options(ctx: typer.Context) -> dict[str, bool]:
@@ -39,14 +57,18 @@ def command_options(
 ) -> None:
     """Allow output flags both before and after a command name.
 
-    Raises:
-        typer.BadParameter: Quiet and JSON output are both requested.
+    A conflict is reported through :func:`fail` rather than raised as
+    ``typer.BadParameter`` so that ``--json`` still gets a JSON error object instead of
+    Typer's human usage text — even though the conflict is what makes the requested mode
+    ambiguous, ``--json`` alone is enough to commit to the JSON error contract.
     """
     flags = options(ctx)
     final_quiet = flags["quiet"] or quiet
     final_json = flags["json"] or json_output
+    global _json_mode
+    _json_mode = final_json
     if final_quiet and final_json:
-        raise typer.BadParameter("--quiet and --json are mutually exclusive")
+        fail("--quiet and --json are mutually exclusive")
     ctx.find_root().obj = {"quiet": final_quiet, "json": final_json}
 
 
@@ -55,7 +77,7 @@ def selected(names: list[str] | None) -> list[AgentAdapter]:
     try:
         return registry.select(names)
     except KeyError as exc:
-        raise typer.BadParameter(str(exc).strip("'"), param_hint="--agent") from exc
+        fail(str(exc).strip("'"))
 
 
 def emit(ctx: typer.Context, value: Any, *, quiet_text: str | None = None) -> None:
@@ -99,9 +121,32 @@ def emit_operations(ctx: typer.Context, results: list[OperationResult]) -> None:
 
 
 def fail(message: str) -> NoReturn:
-    """Print a consistent error and terminate the current command."""
-    console.print(f"[red]error:[/red] {message}", highlight=False)
+    """Report a command failure and terminate, honouring the output contract.
+
+    Under ``--json`` the only thing on stdout is a JSON document, so an error is emitted
+    as a stable error object there rather than as styled prose that would break a parser
+    mid-stream. Otherwise the diagnostic goes to stderr, leaving stdout for the
+    command's actual output.
+    """
+    if _json_mode:
+        typer.echo(json.dumps({"error": {"message": message}}, indent=2))
+    else:
+        error_console.print(f"[red]error:[/red] {message}", highlight=False)
     raise typer.Exit(1)
+
+
+@contextmanager
+def command_boundary() -> Generator[None]:
+    """Normalize expected domain failures into the documented CLI error contract.
+
+    Rendering, config parsing, plugin loading, and filesystem access all raise ordinary
+    exceptions. Without a boundary a broken template or an unreadable config surfaces as
+    a traceback instead of ``error: ...`` and exit 1.
+    """
+    try:
+        yield
+    except (OSError, ValueError, KeyError) as exc:
+        fail(str(exc))
 
 
 def warn_if_jq_missing() -> None:

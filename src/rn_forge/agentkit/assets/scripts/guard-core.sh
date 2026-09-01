@@ -1,5 +1,28 @@
 #!/usr/bin/env bash
 # agentkit: shared destructive-command and prompt-secret guard logic.
+#
+# SCOPE AND LIMITS — read before relying on these guards.
+#
+# These hooks are a *speed bump against accident*, not a security boundary.
+# They pattern-match a command string; they do not parse shell grammar. Any
+# determined bypass is trivial (variable indirection, base64, `eval`, a
+# wrapper script, `$(printf ...)`), and closing those holes would need a real
+# shell parser plus a fail-closed default that rejects anything it cannot
+# classify — which would block far more legitimate work than it saves.
+#
+# The deliberate trade-off: cover the spellings a person or agent plausibly
+# types by mistake (combined, separated, and long flags; git global options),
+# and stay quiet otherwise. What is NOT covered is intentional evasion.
+#
+# Fail-closed policy, by contrast, IS enforced for the *inputs* these guards
+# receive: an unparseable or wrong-typed hook event blocks the command and
+# write guards (see guard_event_field). The prompt-secret guard warns instead
+# of blocking, because a malformed event there risks no destructive action.
+
+# `git` followed by any number of global options (each with an optional value
+# token) and then `push`. Shared by detection and argument extraction so the two
+# never disagree about where the push arguments begin.
+_GUARD_GIT_PUSH='(^|[[:space:]])git([[:space:]]+-{1,2}[^[:space:]]+([[:space:]]+[^-[:space:]][^[:space:]]*)?)*[[:space:]]+push([[:space:]]|$)'
 
 _guard_block() {
   printf '%s\n' "$1"
@@ -8,10 +31,20 @@ _guard_block() {
 
 guard_check_bash_command() {
   local cmd="$1"
-  local rm_rf
+  local rm_rf opt r_flag f_flag rf_flag both
 
   [ -z "$cmd" ] && return 0
-  rm_rf='rm\s+(-[a-zA-Z]*[rR][a-zA-Z]*[fF]|-[a-zA-Z]*[fF][a-zA-Z]*[rR])\s+'
+
+  # `rm -rf` has many equivalent spellings. Match the recursive and force flags
+  # as one combined token (-rf, -fr, -Rf) or as two separate tokens in either
+  # order, allowing unrelated flags (-v, --one-file-system) in between, and
+  # accepting the GNU long forms.
+  opt='-[a-zA-Z-]+'
+  r_flag='(-[a-zA-Z]*[rR][a-zA-Z]*|--recursive)'
+  f_flag='(-[a-zA-Z]*[fF][a-zA-Z]*|--force)'
+  rf_flag='(-[a-zA-Z]*([rR][a-zA-Z]*[fF]|[fF][a-zA-Z]*[rR])[a-zA-Z]*)'
+  both="(${rf_flag}|${r_flag}(\\s+${opt})*\\s+${f_flag}|${f_flag}(\\s+${opt})*\\s+${r_flag})"
+  rm_rf="\\brm(\\s+${opt})*\\s+${both}(\\s+${opt})*\\s+"
 
   if printf '%s' "$cmd" | grep -qiE "${rm_rf}[\"']?/[\"']?(\$|[[:space:]])"; then
     _guard_block "Deletes entire filesystem"
@@ -34,7 +67,9 @@ guard_check_bash_command() {
     return 1
   fi
 
-  if printf '%s' "$cmd" | grep -qE '\bgit\s+push\b'; then
+  # Allow Git global options between `git` and `push` (git -C . push, git
+  # --git-dir=X push), each optionally carrying a separate value token.
+  if printf '%s' "$cmd" | grep -qE "${_GUARD_GIT_PUSH}"; then
     _guard_check_git_push "$cmd" || return 1
   fi
 
@@ -59,7 +94,7 @@ _guard_check_git_push() {
   local -a args positionals
 
   protected="${AGENTKIT_PROTECTED_BRANCHES:-${CLAUDE_PROTECTED_BRANCHES:-main|master}}"
-  push_args=$(printf '%s' "$cmd" | sed -E 's/^.*git[[:space:]]+push([[:space:]]+|$)//')
+  push_args=$(printf '%s' "$cmd" | sed -E "s/^.*${_GUARD_GIT_PUSH}([[:space:]]+|$)//")
   read -r -a args <<<"$push_args"
 
   for token in "${args[@]}"; do
@@ -206,6 +241,29 @@ _guard_match_secret() {
     _guard_block "$reason"
     return 1
   fi
+  return 0
+}
+
+# ============================================================
+# INPUT: fail-closed hook event parsing.
+# ============================================================
+
+# Extract one field from a hook event payload, failing closed on bad input.
+#
+# Sets GUARD_FIELD on success. Returns 1 when the payload is not valid JSON or
+# when the field is present with a non-string type — callers must treat that as
+# "cannot classify" and block, rather than proceeding with an empty command or
+# path (which every guard treats as harmless). An absent or null field is not
+# an error: GUARD_FIELD is set to the empty string and 0 is returned.
+guard_event_field() {
+  local input="$1" filter="$2" kind
+  GUARD_FIELD=""
+  kind=$(printf '%s' "$input" | jq -r "($filter) | type" 2>/dev/null) || return 1
+  case "$kind" in
+    string) GUARD_FIELD=$(printf '%s' "$input" | jq -r "$filter") || return 1 ;;
+    null) GUARD_FIELD="" ;;
+    *) return 1 ;;
+  esac
   return 0
 }
 

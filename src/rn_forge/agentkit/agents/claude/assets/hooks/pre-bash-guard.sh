@@ -9,7 +9,11 @@ LIB="${0%/*}/../../_common/hooks/guard-core.sh"
 guard_require_jq_plain "pre-bash-guard" block
 
 INPUT=$(cat)
-CMD=$(printf '%s' "$INPUT" | jq -r '.tool_input.command // ""')
+# Fail closed: an unparseable event must not be read as "no command".
+if ! guard_event_field "$INPUT" '.tool_input.command'; then
+  guard_emit_plain "pre-bash-guard" "hook event was not valid JSON or the command field had an unexpected type; refusing to run unclassified." 2
+fi
+CMD="$GUARD_FIELD"
 
 if REASON=$(guard_check_bash_command "$CMD"); then
   exit 0

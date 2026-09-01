@@ -1,7 +1,7 @@
 """Implement Claude Code JSON rendering and default-pack artifacts.
 
-The adapter combines the Claude schema, packaged scope defaults, Jinja JSON
-templates, native ``.claude`` paths, and shared hook assets.
+The adapter combines the Claude schema, packaged scope defaults, Jinja JSON templates,
+native ``.claude`` paths, and shared hook assets.
 """
 
 from __future__ import annotations
@@ -43,15 +43,12 @@ class ClaudeAdapter(AgentAdapter):
             native_relative=Path(".claude") / filename,
             template=f"{scope}.j2",
         )
+        # Hook scripts are declared before `config`, which the packaged
+        # defaults point at by path (see `defaults/*.json`'s "hooks" key), so
+        # a written config never lands pointing at a script that does not
+        # exist yet.
         if scope == "local":
             return [
-                config,
-                Artifact(
-                    _CLAUDE_MD,
-                    Path(_CLAUDE_MD),
-                    template="CLAUDE.local.md.j2",
-                    seed_only=True,
-                ),
                 Artifact(
                     key="hooks/post-edit-format.sh",
                     native_relative=Path("claude/hooks/post-edit-format.sh"),
@@ -59,19 +56,15 @@ class ClaudeAdapter(AgentAdapter):
                     source=self._shared_scripts_dir / "post-edit-format.sh",
                     executable=True,
                 ),
+                config,
+                Artifact(
+                    _CLAUDE_MD,
+                    Path(_CLAUDE_MD),
+                    template="CLAUDE.local.md.j2",
+                    seed_only=True,
+                ),
             ]
         return [
-            config,
-            Artifact(
-                _CLAUDE_MD,
-                Path(".claude/CLAUDE.md"),
-                template="CLAUDE.md.j2",
-            ),
-            Artifact(
-                "output-styles/concise.md",
-                Path(".claude/output-styles/concise.md"),
-                template="concise.md.j2",
-            ),
             Artifact(
                 "hooks/guard-core.sh",
                 Path("_common/hooks/guard-core.sh"),
@@ -105,6 +98,17 @@ class ClaudeAdapter(AgentAdapter):
                 Path("claude/hooks/unwrap_md.py"),
                 root="share",
                 source=self._shared_scripts_dir / "unwrap_md.py",
+            ),
+            config,
+            Artifact(
+                _CLAUDE_MD,
+                Path(".claude/CLAUDE.md"),
+                template="CLAUDE.md.j2",
+            ),
+            Artifact(
+                "output-styles/concise.md",
+                Path(".claude/output-styles/concise.md"),
+                template="concise.md.j2",
             ),
             *self.skill_artifacts(self._skills_dir),
         ]

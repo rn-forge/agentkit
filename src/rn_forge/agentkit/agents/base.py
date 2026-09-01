@@ -1,7 +1,7 @@
 """Define the adapter contract used by managers, commands, and discovery.
 
-Concrete adapters declare artifacts and schemas, while the base class resolves
-native and staged paths and provides common validation and rendering helpers.
+Concrete adapters declare artifacts and schemas, while the base class resolves native
+and staged paths and provides common validation and rendering helpers.
 """
 
 from __future__ import annotations
