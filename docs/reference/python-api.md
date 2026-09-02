@@ -18,13 +18,15 @@ logic.
 
 ::: rn_forge.agentkit.cli
 
-::: rn_forge.agentkit.commands.common
+::: rn_forge.agentkit.commands.base
 
-::: rn_forge.agentkit.commands.global_cmds
+::: rn_forge.agentkit.commands.global_command
 
-::: rn_forge.agentkit.commands.project_cmds
+::: rn_forge.agentkit.commands.project_command
 
-::: rn_forge.agentkit.commands.shared_cmds
+::: rn_forge.agentkit.commands.self_command
+
+::: rn_forge.agentkit.commands.root_command
 
 ## Core services
 

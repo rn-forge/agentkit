@@ -502,7 +502,7 @@ def test_diff_write_captures_hand_edited_hook_into_packaged_source(
 def test_install_commands_warn_when_jq_is_missing(isolated_env, monkeypatch) -> None:
     _, _, repo = isolated_env
     monkeypatch.setattr(
-        "rn_forge.agentkit.commands.common.shutil.which", lambda _name: None
+        "rn_forge.agentkit.commands.base.shutil.which", lambda _name: None
     )
 
     applied = runner.invoke(app, ["global", "apply", "--agent", "codex"])

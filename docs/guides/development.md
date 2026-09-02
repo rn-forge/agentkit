@@ -84,7 +84,7 @@ for exactly this reason — do not write a test that bypasses it.
 | `src/rn_forge/agentkit/agents/` | Adapter interface, registry, built-in schemas, defaults, templates, and discovery-by-location assets |
 | `src/rn_forge/agentkit/assets/` | Shared guard library, instruction partials, and packaged skills |
 | `src/rn_forge/agentkit/core/` | Artifacts, paths, merge, render, I/O, state, diff, doctor, and the `operations/` apply, remove, capture, and init pipelines |
-| `src/rn_forge/agentkit/commands/` | Typer global, project, and root command groups |
+| `src/rn_forge/agentkit/commands/` | `BaseCommand` plus the `Global`/`Project`/`Self`/`Root` command classes the Typer surface in `cli.py` constructs and calls |
 | `tests/` | Isolated tests mirroring the source tree; fake `HOME` and `RNF_HOME` from `conftest.py` |
 | `tasks/`, `scripts/` | The task vocabulary and its enforcement linters |
 | `docs/` | This site |

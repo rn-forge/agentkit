@@ -112,7 +112,7 @@ Ignore these — all regenerable with `agentkit project update`:
 ```
 
 The authoritative list is `_GITIGNORE_ENTRIES` in
-`src/rn_forge/agentkit/commands/project_cmds.py`; `project init` writes it
+`src/rn_forge/agentkit/commands/project_command.py`; `project init` writes it
 between `# BEGIN rn-forge agentkit` / `# END rn-forge agentkit` markers and
 refreshes the block in place on later runs.
 

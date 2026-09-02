@@ -7,7 +7,7 @@ from typer.testing import CliRunner
 
 from rn_forge.agentkit import __version__
 from rn_forge.agentkit.cli import app
-from rn_forge.agentkit.commands import self_cmds
+from rn_forge.agentkit.commands import self_command
 
 runner = CliRunner()
 
@@ -44,7 +44,7 @@ def _stub_build_env(monkeypatch: pytest.MonkeyPatch) -> list[Path]:
         env_dir.mkdir(parents=True)
         (env_dir / "marker").write_text(source_root.name)
 
-    monkeypatch.setattr(self_cmds, "_build_env", fake_build_env)
+    monkeypatch.setattr(self_command, "_build_env", fake_build_env)
     return calls
 
 
@@ -77,7 +77,7 @@ def test_upgrade_archive_already_current_is_a_noop(
     def fail_if_called(source_root: Path, env_dir: Path) -> None:
         raise AssertionError("must not build when already on the resolved version")
 
-    monkeypatch.setattr(self_cmds, "_build_env", fail_if_called)
+    monkeypatch.setattr(self_command, "_build_env", fail_if_called)
     archive = _make_archive(tmp_path, __version__)
 
     result = runner.invoke(app, ["--json", "upgrade", "--archive", str(archive)])
