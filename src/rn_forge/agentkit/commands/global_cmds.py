@@ -1,6 +1,6 @@
 """Implement global apply, sync, reset, and status-list workflows.
 
-These Typer commands select adapters and delegate file operations to the core manager
+These Typer commands select adapters and delegate file operations to core.operations
 beneath ``$RNF_HOME/share/agentkit``.
 """
 
@@ -12,16 +12,14 @@ import typer
 from rich.table import Table
 
 from ..core.config import parse_cli_overrides
-from ..core.manager import (
-    artifact_drifted,
+from ..core.operations import (
     apply_adapter,
-    managed_config_path,
-    project_root,
+    artifact_drifted,
     resolve_config,
     reset_adapter,
     sync_adapter,
 )
-from ..core.paths import global_root
+from ..core.paths import global_root, managed_config_path, project_root
 from ..core.state import content_hash
 from .common import (
     command_boundary,

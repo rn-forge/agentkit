@@ -8,7 +8,7 @@ import pytest
 
 from rn_forge.agentkit.agents.claude import ClaudeAdapter
 from rn_forge.agentkit.agents.codex import CodexAdapter
-from rn_forge.agentkit.core.manager import apply_adapter
+from rn_forge.agentkit.core.operations import apply_adapter
 
 pytestmark = pytest.mark.skipif(shutil.which("jq") is None, reason="jq is required")
 

@@ -8,6 +8,31 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from ..agents.base import AgentAdapter, Scope
+
+
+def project_root(start: Path | None = None) -> Path:
+    """Locate the nearest repository root, falling back to the start directory."""
+    current = (start or Path.cwd()).expanduser().resolve()
+    if current.is_file():
+        current = current.parent
+    for candidate in (current, *current.parents):
+        if (candidate / ".git").exists():
+            return candidate
+    return current
+
+
+def scope_root(scope: "Scope", repo_root: Path) -> Path:
+    """Return the global or repository-local agentkit working-data root."""
+    return global_root() if scope == "global" else project_scope_root(repo_root)
+
+
+def managed_config_path(adapter: "AgentAdapter", root: Path) -> Path:
+    """Return an adapter's managed source path beneath a scope root."""
+    return Path(root) / adapter.name / "config.toml"
 
 
 def rnf_home() -> Path:

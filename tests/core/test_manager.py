@@ -6,21 +6,24 @@ from rn_forge.agentkit.agents.claude import ClaudeAdapter
 from rn_forge.agentkit.agents.codex import CodexAdapter
 from rn_forge.agentkit.core.artifacts import Artifact
 from rn_forge.agentkit.core.io import read_config, write_config
-from rn_forge.agentkit.core.manager import (
+from rn_forge.agentkit.core.operations import (
     apply_adapter,
     artifact_drifted,
     capture_adapter,
     capture_assets,
     capture_defaults,
     init_adapter,
-    managed_config_path,
     remove_owned_artifacts,
     reset_adapter,
     resolve_config,
     strip_native_hooks,
     sync_adapter,
 )
-from rn_forge.agentkit.core.paths import global_root, project_scope_root
+from rn_forge.agentkit.core.paths import (
+    global_root,
+    managed_config_path,
+    project_scope_root,
+)
 from rn_forge.agentkit.core.state import content_hash
 
 

@@ -47,7 +47,15 @@ Everything here is agent-agnostic — `core` never imports an adapter.
 
 ### Orchestration and diagnostics
 
-::: rn_forge.agentkit.core.manager
+::: rn_forge.agentkit.core.operations.result
+
+::: rn_forge.agentkit.core.operations.apply
+
+::: rn_forge.agentkit.core.operations.remove
+
+::: rn_forge.agentkit.core.operations.capture
+
+::: rn_forge.agentkit.core.operations.init
 
 ::: rn_forge.agentkit.core.state
 

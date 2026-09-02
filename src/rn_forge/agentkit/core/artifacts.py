@@ -69,3 +69,8 @@ class Artifact:
                 f"Artifact native_relative must not traverse upwards: "
                 f"{self.native_relative}"
             )
+
+    @property
+    def mode(self) -> int | None:
+        """Return the file mode a write should enforce, if any."""
+        return 0o755 if self.executable else None

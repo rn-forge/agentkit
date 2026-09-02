@@ -83,7 +83,7 @@ for exactly this reason — do not write a test that bypasses it.
 | -- | -- |
 | `src/rn_forge/agentkit/agents/` | Adapter interface, registry, built-in schemas, defaults, templates, and discovery-by-location assets |
 | `src/rn_forge/agentkit/assets/` | Shared guard library, instruction partials, and packaged skills |
-| `src/rn_forge/agentkit/core/` | Artifacts, paths, merge, render, I/O, state, diff, doctor, and manager services |
+| `src/rn_forge/agentkit/core/` | Artifacts, paths, merge, render, I/O, state, diff, doctor, and the `operations/` apply, remove, capture, and init pipelines |
 | `src/rn_forge/agentkit/commands/` | Typer global, project, and root command groups |
 | `tests/` | Isolated tests mirroring the source tree; fake `HOME` and `RNF_HOME` from `conftest.py` |
 | `tasks/`, `scripts/` | The task vocabulary and its enforcement linters |
@@ -109,12 +109,15 @@ move a number. Behavioural risk is covered directly instead — the registry,
 guard, state, and reset regressions all exist because a specific failure mode
 was worth pinning, not because a percentage demanded it.
 
-**`core/manager.py` is large** (~600 lines) and mixes resolution, planning,
-backup policy, rendering, writes, capture, and state. Splitting it into
-planning/execution/presentation services is the textbook move, but the module is
-cohesive — nearly every function participates in one apply pipeline — and the
-split would spread that pipeline across files without removing anything. It
-stays one module until a second consumer of the planning half exists.
+**`core/manager.py` was split into `core/operations/`.** The module started at
+~600 lines as one cohesive apply pipeline, which is why an earlier version of
+this entry recorded a decision *not* to split it. It grew to 919 lines and came
+to carry four pipelines that share only `OperationResult` — apply/sync,
+uninstall-style removal, capture/write-back, and project init — which is what
+triggered the split (`docs/specs/initial.md` §14.2). Each pipeline is now its
+own module (`apply.py`, `remove.py`, `capture.py`, `init.py`) plus a shared
+`result.py`; `core/operations/__init__.py` re-exports the public verbs so call
+sites still import from one place.
 
 **`.editorconfig` disables `insert_final_newline` and `trim_trailing_whitespace`
 globally.** Both are unusual defaults. They are set this way because the

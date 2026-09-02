@@ -24,6 +24,16 @@ if TYPE_CHECKING:
 
 Scope = Literal["global", "local"]
 
+_MANAGED_SOURCE_HEADER = """\
+# agentkit managed source — {agent}, {scope} scope.
+#
+# Keys set here override the packaged {scope} defaults and are merged into every
+# rendered {agent} artifact. This file is the layer you edit by hand; it is also
+# where `agentkit diff --scope {scope} --write` captures native changes.
+#
+# An empty file means "no {scope} overrides" — the packaged defaults apply as-is.
+"""
+
 
 class AgentAdapter(ABC):
     """Translate agentkit-managed configuration into native agent artifacts.
@@ -150,12 +160,16 @@ class AgentAdapter(ABC):
         Exposed so capture can promote a managed override into the file that ships as
         everyone's default, mirroring how ``Artifact.source`` exposes a static
         artifact's packaged source to :func:`capture_assets
-        <rn_forge.agentkit.core.manager.capture_assets>`. ``None`` means this adapter's
-        defaults are schema-only, with nothing packaged to promote into.
+        <rn_forge.agentkit.core.operations.capture.capture_assets>`. ``None`` means this
+        adapter's defaults are schema-only, with nothing packaged to promote into.
         """
         if self._defaults_suffix is None:
             return None
         return self.package_dir / "defaults" / f"{scope}{self._defaults_suffix}"
+
+    def managed_source_scaffold(self, scope: Scope) -> str:
+        """Return the documented empty-override scaffold for this adapter and scope."""
+        return _MANAGED_SOURCE_HEADER.format(agent=self.name, scope=scope)
 
     def read_managed_config(self, path: Path) -> dict[str, Any]:
         """Read an optional agentkit-managed source file."""

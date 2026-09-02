@@ -34,7 +34,7 @@ from typing import Literal
 from ..agents.base import AgentAdapter
 from ..agents.registry import registry
 from .artifacts import Artifact, ArtifactKind
-from .manager import resolve_config
+from .operations import resolve_config
 from .state import StateStore, content_hash, file_hash
 
 Status = Literal[

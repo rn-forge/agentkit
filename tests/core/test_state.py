@@ -8,7 +8,7 @@ from pathlib import Path
 import pytest
 
 from rn_forge.agentkit.agents.codex import CodexAdapter
-from rn_forge.agentkit.core.manager import apply_adapter
+from rn_forge.agentkit.core.operations import apply_adapter
 from rn_forge.agentkit.core.paths import global_root
 from rn_forge.agentkit.core.state import StateStore
 

@@ -26,15 +26,19 @@ from ..core.doctor import (
     check_environment,
     sort_key,
 )
-from ..core.manager import (
+from ..core.operations import (
     capture_adapter,
     capture_assets,
     capture_defaults,
-    project_root,
     resolve_config,
+)
+from ..core.paths import (
+    global_root,
+    package_root,
+    project_root,
+    project_scope_root,
     scope_root,
 )
-from ..core.paths import global_root, package_root, project_scope_root
 from .common import (
     AGENT_HELP,
     JSON_HELP,

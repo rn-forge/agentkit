@@ -19,7 +19,7 @@ from rich.console import Console
 
 from ..agents.base import AgentAdapter
 from ..agents.registry import registry
-from ..core.manager import OperationResult
+from ..core.operations import OperationResult
 
 console = Console()
 error_console = Console(stderr=True)

@@ -2,7 +2,7 @@ from rn_forge.agentkit.agents.claude import ClaudeAdapter
 from rn_forge.agentkit.agents.codex import CodexAdapter
 from rn_forge.agentkit.core.doctor import HEALTHY, check_agent, check_environment
 from rn_forge.agentkit.core.io import write_config
-from rn_forge.agentkit.core.manager import apply_adapter
+from rn_forge.agentkit.core.operations import apply_adapter
 from rn_forge.agentkit.core.paths import global_root, project_scope_root
 
 

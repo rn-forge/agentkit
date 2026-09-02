@@ -5,7 +5,7 @@ from pydantic import BaseModel
 
 from rn_forge.agentkit.agents.base import AgentAdapter, Scope
 from rn_forge.agentkit.core.artifacts import Artifact
-from rn_forge.agentkit.core.manager import apply_adapter
+from rn_forge.agentkit.core.operations import apply_adapter
 
 
 class ExampleConfig(BaseModel):

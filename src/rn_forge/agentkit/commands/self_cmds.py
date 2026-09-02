@@ -25,13 +25,12 @@ from typing import Any
 import typer
 
 from .. import __version__
-from ..core.manager import (
+from ..core.operations import (
     OperationResult,
-    project_root,
     remove_owned_artifacts,
     strip_native_hooks,
 )
-from ..core.paths import global_root, rnf_home
+from ..core.paths import global_root, project_root, rnf_home
 from .common import (
     DRY_RUN_HELP,
     JSON_HELP,

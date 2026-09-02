@@ -1,7 +1,7 @@
 """Implement repository init, update, and status workflows.
 
 These Typer commands locate repository roots, resolve local managed sources, and
-delegate artifact writes to the core manager.
+delegate artifact writes to core.operations.
 """
 
 from __future__ import annotations
@@ -16,18 +16,16 @@ from rich.table import Table
 from ..core.config import parse_cli_overrides
 from ..core.diff import layered_changes
 from ..core.io import atomic_write
-from ..core.manager import (
+from ..core.operations import (
     OperationResult,
     apply_adapter,
     artifact_drifted,
     init_adapter,
-    managed_config_path,
-    project_root,
     remove_owned_artifacts,
     resolve_config,
     strip_native_hooks,
 )
-from ..core.paths import project_scope_root
+from ..core.paths import managed_config_path, project_root, project_scope_root
 from ..core.state import content_hash
 from .common import (
     command_boundary,
