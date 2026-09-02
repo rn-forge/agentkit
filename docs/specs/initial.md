@@ -804,7 +804,275 @@ both commands' confirm/decline/dry-run paths in `test_self_cmds.py` and
 alongside the same 2 pre-existing snapshot-test failures carried over from this
 session's starting WIP.
 
+**2026-09-01 — Phase 5, structural refactor (§14), executed as specified.**
+Three commits, one per phase, each behaviour-preserving and independently green:
+
+- **A** collapsed `agents/claude/adapter.py` and `agents/codex/adapter.py` into
+  `AgentAdapter`: `Artifact.template_root`, a linear
+  `render_artifact()`/`source_path()` in the base class keyed off
+  `Artifact.kind`, `package_dir`-derived `template_dir`/`_assets_dir`/
+  `defaults_path()`, and `_global_artifacts()`/`_local_artifacts()` replacing
+  the per-adapter `artifacts()` override. `AgentRegistry._validate_artifacts`
+  moved from a module function to a private static method.
+- **B** split `core/manager.py` (919 lines, four pipelines sharing only
+  `OperationResult`) into
+  `core/operations/{result,apply,remove,capture, init}.py`, re-exported from
+  `core/operations/__init__.py`. `project_root`, `scope_root`, and
+  `managed_config_path` moved to `core/paths.py`; `Artifact.mode` replaced
+  `_artifact_mode()`; `AgentAdapter.managed_source_scaffold()` replaced the
+  module-level `_managed_source_scaffold()`.
+- **C** made `cli.py` the complete Typer surface (root callback, `global`/
+  `project`/`self` sub-apps, root-level `diff`/`doctor`/`version`, every
+  command function 1–3 lines) backed by command classes in `commands/`:
+  `BaseCommand` (replacing `commands/common.py`) carries per-invocation
+  `--quiet`/`--json` state and exposes `emit`/`emit_operations`/`fail`/
+  `selected`/`boundary`/`warn_if_jq_missing`; `GlobalCommand`,
+  `ProjectCommand`, `SelfCommand`, and `RootCommand` replace
+  `{global,project,self,shared}_cmds.py`. `RootCommand`'s doctor/diff
+  presentation split by row kind into private methods
+  (`_print_agent_summary`/`_print_artifact_rows`/`_print_diagnostic_rows`/
+  `_print_doctor_footer` and `_print_capture_summary`/`_print_layer_changes`/
+  `_print_artifact_drift`).
+
+**Validation:** `task format`, `task typecheck` (pyright strict, 0 errors), and
+`task test` (204 tests) clean after every phase; `task docs:build --strict`
+clean after phase C. `task lint`'s `mdformat --check` step continues to fail on
+the same 2 pre-existing packaged-snapshot files noted above (unrelated to phase
+5 — reproduces identically on the pre-phase-5 commit); not fixed here.
+
 ## 13. Pending
 
-None. All items from earlier phases were resolved; see §12 for the closing
-entry.
+None. All items from phases 1–5 are resolved; see §12 for the closing entries.
+
+______________________________________________________________________
+
+## 14. Phase 5 — structural refactor (implemented 2026-09-01; see §12)
+
+Origin: a maintainability review of `src/` on 2026-09-01. Nothing here fixes a
+bug or adds a capability — the whole phase exists so that a future reader can
+see what a module does without reconstructing a dispatch chain first. It is
+written as a hand-off: a session that has read §§1–13 and this section should be
+able to execute a phase end to end without further design decisions.
+
+### 14.0 Ground rules
+
+**Behaviour-preserving.** No change to the CLI surface, option names, help text,
+human or `--json` output bytes, artifact keys, native paths, `state.json`
+format, or backup layout. `tests/` is the contract: the suite should pass
+unchanged except where a phase below explicitly authorizes an edit. A test that
+needs a *new assertion changed* is a signal that the refactor has changed
+behaviour — stop and report it rather than updating the assertion.
+
+**One phase, one commit, one green gate.** Phases A → B → C in order; each ends
+at `task format && task validate` clean (lint, pyright strict at zero errors,
+tests, docs build) and is independently revertable. B is much easier after A; C
+is much easier after B.
+
+**Docs move with the code.** Each phase names the pages it invalidates. In
+particular `docs/reference/python-api.md` lists modules explicitly and
+`mkdocs.yml`'s `nav` is the page structure — a module added or renamed without
+updating them fails `task lint`.
+
+**The existing conventions still apply.** No positional indexing into
+`artifacts()` or operation-result lists (select by `.key` / `.artifact`); no new
+`# type: ignore`; `task` remains the only entrypoint.
+
+### 14.1 Phase A — collapse the two adapters into `AgentAdapter`
+
+`agents/claude/adapter.py` and `agents/codex/adapter.py` are ~180 lines each and
+differ in about 40 of them. `render_artifact()` and `template_root()` are
+if/else chains over artifact *keys*, duplicated per adapter, and `doctor` has to
+re-enter the same dispatch through `source_path()` to name a template's source
+file. Target: each concrete adapter declares only `schema()`, `render()`,
+`parse_native()`, and its two artifact lists.
+
+**A1 — put the template root on the declaration.** Add
+`template_root: Path | None = None` to `Artifact` (`core/artifacts.py`): the
+packaged directory `template` resolves against, `None` meaning the adapter's own
+`template_dir`. Reject `template_root` set without `template` in
+`__post_init__`, alongside the existing exclusivity check.
+
+**A2 — `render_artifact()` becomes linear, in the base class only.** Source
+first, then the primary config through `render()` (which validates through the
+schema), then a single templated path:
+
+```python
+root = artifact.template_root or self.template_dir
+return RenderEngine(root).render_template(
+    artifact.template, self._render_context(artifact, merged_config)
+)
+```
+
+`_render_context()` keys off `artifact.kind`, not `artifact.key`: `skill` →
+`{"agent": self.name}`, `doc` → `{}`, otherwise `{"config": merged_config}`.
+Both adapter overrides of `render_artifact()` and `template_root()` are then
+deleted, as is `AgentAdapter.template_root()` itself. `source_path()` collapses
+to
+`artifact.source or (artifact.template_root or self.template_dir) / artifact.template`;
+`core/doctor.py:167` is its only external caller.
+
+Do **not** implement this as an adapter-registered `{key or kind: directory}`
+map. That keeps the indirection and adds a second place to look; the point is
+that the artifact declaration already knows where it comes from.
+
+**A3 — derive the packaged directories from `self.name` in the base class.**
+`template_dir`, `_assets_dir`, `_shared_scripts_dir`, `_shared_instructions_dir`
+and the native skills root (`.claude/skills` / `.codex/skills`, i.e.
+`Path(f".{self.name}") / "skills"`) are identical modulo the agent name. The
+subtlety: the base class cannot use `__file__` to find a *subclass's* package
+directory. Use one `package_dir` property —
+`Path(inspect.getfile(type(self))).parent` — and derive `template_dir`,
+`_assets_dir` and `defaults_path()` from it. This works for third-party adapters
+too, which is why it is preferable to a per-adapter constant.
+
+**A4 — move `defaults()` / `defaults_path()` up.** Both adapters merge schema
+defaults with a packaged scope file and differ only in extension. Base
+`defaults_path()` returns `package_dir / "defaults" / f"{scope}{suffix}"` from a
+class attribute (`".json"` for Claude, `".toml"` for Codex) and keeps returning
+`None` when the attribute is unset, so a schema-only third-party adapter still
+works; `defaults()` merges the packaged layer only when that path exists.
+`template_errors()` is byte-identical in both adapters — move it as-is.
+
+**A5 — factor the repeated artifact blocks.** The global "guard-core.sh plus N
+executable hook scripts under `<share>/<agent>/hooks/`" block and the local
+`post-edit-format.sh` block are structurally identical; give the base a helper
+taking the script names. Preserve declaration **order** exactly — the comments
+in both adapters explain that hook scripts are declared before the config that
+points at them by absolute path, and `tests/agents/test_*_adapter.py` asserts
+the key order.
+
+**A6 — `artifacts(scope)` becomes concrete in the base**, dispatching to
+abstract `_global_artifacts()` / `_local_artifacts()` that each adapter
+implements as a flat list. Do **not** turn these into class-level list
+attributes: `skill_artifacts()` `rglob`s the packaged skills tree, and a
+class-body list would run that glob at import time for every adapter on every
+invocation, including `--help`. The method form reads the same and stays lazy.
+Record that reason next to the abstract methods so it is not "simplified" later.
+
+**A7 — `registry._validate_artifacts` becomes a private static method of
+`AgentRegistry`**, called from `_load()`. No test imports it by name today
+(checked), so this is pure motion.
+
+Expected shape afterwards: `agents/base.py` grows to roughly 400 lines; each
+concrete adapter drops to ~80 and reads as "schema, render, parse, two lists".
+Docs to update: `docs/architecture/adapters.md` (the adapter contract — the
+`template_root` field and the fact that `render_artifact`/`template_root` are no
+longer extension points), and the `Artifact` attribute table in §6.1 of this
+document is historical and stays as written.
+
+### 14.2 Phase B — split `core/manager.py`
+
+919 lines spanning four pipelines that no longer share much beyond
+`OperationResult`: apply/sync, uninstall-style removal, capture/write-back, and
+project init. Target layout — a `core/operations/` package:
+
+| Module | Contents |
+| -- | -- |
+| `operations/result.py` | `OperationResult` and the shared private helpers (`_content_diff`, `_seeded_result`, `_managed_copy_path`, `_mode_differs`, `_highest_source`) |
+| `operations/apply.py` | `resolve_config`, `apply_adapter`, `sync_adapter`, `_apply_resolved`, `artifact_drifted` |
+| `operations/remove.py` | `reset_adapter`, `strip_native_hooks`, `remove_owned_artifacts`, `_prune_empty_dirs` |
+| `operations/capture.py` | `capture_adapter`, `capture_assets`, `capture_defaults`, `_capture_updates` |
+| `operations/init.py` | `init_adapter`, `scaffold_managed_source` |
+
+`operations/__init__.py` re-exports the public verbs and `OperationResult`, so
+call sites import one module:
+`from ..core.operations import apply_adapter, OperationResult`. Delete
+`core/manager.py` rather than leaving it as a forwarding facade — a facade that
+still answers to the old name is exactly the kind of "where does this actually
+live" question this phase exists to remove. Import sites to update:
+`commands/*`, `core/doctor.py`, and five test modules
+(`tests/core/test_artifacts.py`, `test_doctor.py`, `test_state.py`,
+`test_manager.py`, `tests/hooks/test_guard_scripts.py`). **Import-line edits are
+the only authorized test change in this phase**; rename
+`tests/core/ test_manager.py` to mirror the new modules if the split is clean
+enough to divide it, otherwise leave it whole.
+
+Also in B:
+
+- `project_root`, `scope_root`, `managed_config_path` move to `core/paths.py`,
+  which is where every other path derivation already lives.
+- `_artifact_mode()` becomes an `Artifact.mode` property (`0o755` when
+  `executable`, else `None`). This is the *right* version of "bring
+  capabilities into the artifact": a derived property on a frozen declaration.
+- `_managed_source_scaffold()` becomes an `AgentAdapter` method — it is
+  adapter-shaped data (the commented header of a managed source file), not
+  manager logic.
+
+**Explicitly rejected, do not implement:** moving atomic writes, backups, or
+state recording onto `Artifact`. `Artifact` is a frozen, self-validating
+declaration constructed inside every adapter's artifact list; giving it I/O
+would pull `core.io`, `core.state` and the backup-run singleton into that list
+and make the declaration untestable without a filesystem. If write consolidation
+becomes worthwhile, the home is an `ArtifactWriter` in `core/operations/` that
+*takes* an `Artifact` — and that is a separate, later decision, not part of this
+phase.
+
+**Also rejected:** moving `write_config()` from `core/io.py` into
+`core/render.py`. `render.py` is the Jinja engine (template resolution,
+`StrictUndefined`, compile-time validation); `write_config` is JSON/TOML/YAML
+serialization plus a write, which is `io`'s entire subject. The move would make
+the render layer depend on format dispatch to serve one caller.
+
+Docs to update in B: the source-layout table in `docs/guides/development.md`;
+`docs/reference/python-api.md` (replace the `core.manager` entry with the
+`core.operations` modules); and — importantly — the **"`core/manager.py` is
+large" trade-off entry** in `docs/guides/development.md`. That entry currently
+records a decision *not* to split, on the grounds that the module is one
+cohesive apply pipeline. Per `CLAUDE.md`, extend rather than re-litigate:
+rewrite it to record that the condition it named has since failed — the module
+grew from ~600 to 919 lines and now carries four pipelines (apply, remove,
+capture, init) that share only a result type — and that this is what triggered
+the split.
+
+### 14.3 Phase C — one command surface, command objects behind it
+
+Two problems: there is no single place to see the whole CLI, and the command
+modules mix argument parsing, orchestration, and presentation, which is where
+Sonar's cyclomatic-complexity findings sit.
+
+**C1 — `cli.py` becomes the complete command-line surface.** Every Typer
+registration lives there: the root callback, the `global` / `project` / `self`
+sub-apps, and the root-level commands, with all option names, defaults, and help
+strings inline. Each function body is one to three lines — construct the command
+object from the Typer context, call the method, nothing else. The file will land
+around 400 lines; that is the point, since it is then a readable index of the
+tool. Adapter `cli_extension` mounting and its per-plugin isolation stay exactly
+as they are today.
+
+**C2 — `commands/<name>_cmds.py` becomes `commands/<name>_command.py` with a
+class**, methods named for the operation: `GlobalCommand.apply/sync/reset/list`,
+`ProjectCommand.init/update/status/remove`,
+`SelfCommand.upgrade/cleanup/ uninstall`, `RootCommand.diff/doctor/version`.
+
+**C3 — the shared logic is a base class, not a static-method bag.** A class of
+`@staticmethod`s is a module with extra syntax. Make `commands/base.py` hold a
+`BaseCommand` constructed from the Typer context that *carries the invocation
+state* every function currently re-derives — the context, the resolved
+`quiet`/`json` flags, the repo root — and exposes `emit`, `emit_operations`,
+`fail`, `selected`, `boundary`, `warn_if_jq_missing` as methods. That absorbs
+most of today's `commands/common.py`. Keep the module-level `_json_mode` mirror
+and `set_json_mode()` as free functions: the root callback resolves `--json`
+before any command object exists, and the JSON error contract has to hold for a
+root-level parameter conflict. Leave a comment saying so.
+
+**C4 — the presentation helpers are the complexity, and the only place a
+non-trivial rewrite is invited.** `_render_doctor` and `_render_diff` in
+`shared_cmds.py` are the flagged functions; while moving them onto
+`RootCommand`, split each by row kind into private methods. Their output is
+asserted on in `tests/commands/test_cli.py` — it must stay byte-identical, and
+that suite is the check that the split is safe.
+
+Docs to update in C: `docs/reference/python-api.md` (module renames — note it is
+currently missing `commands.self_cmds` entirely, so add the `self` command
+module while renaming) and the source-layout table in
+`docs/guides/development.md`.
+
+### 14.4 Out of scope for phase 5
+
+`core/config.py`, `core/diff.py`, `core/doctor.py` and `core/state.py` were
+reviewed and deliberately parked; touch them only for the import updates phases
+A–C force. `agents/*/assets/`, `defaults/`, `templates/`, and the `schema.py`
+modules were reviewed and judged fine as they are. No new features, flags,
+output modes, or dependencies belong in this phase — the value of the whole
+exercise depends on being able to say afterwards that nothing about the tool's
+behaviour changed.
