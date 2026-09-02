@@ -111,8 +111,45 @@ class AgentRegistry:
             raise ValueError(f"adapter name {name!r} is reserved by a built-in adapter")
         if name in seen and name not in builtins:
             raise ValueError(f"adapter name {name!r} is already registered")
-        _validate_artifacts(adapter)
+        self._validate_artifacts(adapter)
         return adapter
+
+    @staticmethod
+    def _validate_artifacts(adapter: AgentAdapter) -> None:
+        """Reject artifact sets whose keys or destinations are ambiguous.
+
+        ``Artifact`` validates each declaration on its own; only the adapter can see
+        that two of them collide. Duplicate keys make state records ambiguous and
+        duplicate destinations make the last write silently win.
+
+        Raises:
+            ValueError: Keys or native destinations collide within a scope, or a
+                scope does not declare exactly one ``config`` artifact.
+        """
+        scopes: tuple[Scope, ...] = ("global", "local")
+        for scope in scopes:
+            artifacts = adapter.artifacts(scope)
+            keys = [artifact.key for artifact in artifacts]
+            if len(keys) != len(set(keys)):
+                duplicates = sorted({key for key in keys if keys.count(key) > 1})
+                raise ValueError(
+                    f"duplicate artifact keys in {scope} scope: {duplicates}"
+                )
+            destinations = [
+                (artifact.root, artifact.native_relative) for artifact in artifacts
+            ]
+            if len(destinations) != len(set(destinations)):
+                raise ValueError(f"duplicate artifact destinations in {scope} scope")
+            # `AgentAdapter.primary_artifact()` assumes exactly one `config` key
+            # and raises only when a caller reaches it (apply, status, doctor);
+            # checking it here means a plugin that violates the contract is
+            # rejected at discovery, not partway through some later command.
+            primary_count = sum(1 for key in keys if key == "config")
+            if primary_count != 1:
+                raise ValueError(
+                    f"{scope} scope must declare exactly one 'config' artifact, "
+                    f"found {primary_count}"
+                )
 
     def get(self, name: str) -> AgentAdapter:
         """Return one adapter by name.
@@ -130,41 +167,6 @@ class AgentRegistry:
     def select(self, names: list[str] | None) -> list[AgentAdapter]:
         """Return named adapters, or all discovered adapters when omitted."""
         return self.discover() if not names else [self.get(name) for name in names]
-
-
-def _validate_artifacts(adapter: AgentAdapter) -> None:
-    """Reject artifact sets whose keys or destinations are ambiguous.
-
-    ``Artifact`` validates each declaration on its own; only the adapter can see
-    that two of them collide. Duplicate keys make state records ambiguous and
-    duplicate destinations make the last write silently win.
-
-    Raises:
-        ValueError: Keys or native destinations collide within a scope, or a
-            scope does not declare exactly one ``config`` artifact.
-    """
-    scopes: tuple[Scope, ...] = ("global", "local")
-    for scope in scopes:
-        artifacts = adapter.artifacts(scope)
-        keys = [artifact.key for artifact in artifacts]
-        if len(keys) != len(set(keys)):
-            duplicates = sorted({key for key in keys if keys.count(key) > 1})
-            raise ValueError(f"duplicate artifact keys in {scope} scope: {duplicates}")
-        destinations = [
-            (artifact.root, artifact.native_relative) for artifact in artifacts
-        ]
-        if len(destinations) != len(set(destinations)):
-            raise ValueError(f"duplicate artifact destinations in {scope} scope")
-        # `AgentAdapter.primary_artifact()` assumes exactly one `config` key
-        # and raises only when a caller reaches it (apply, status, doctor);
-        # checking it here means a plugin that violates the contract is
-        # rejected at discovery, not partway through some later command.
-        primary_count = sum(1 for key in keys if key == "config")
-        if primary_count != 1:
-            raise ValueError(
-                f"{scope} scope must declare exactly one 'config' artifact, "
-                f"found {primary_count}"
-            )
 
 
 registry = AgentRegistry()

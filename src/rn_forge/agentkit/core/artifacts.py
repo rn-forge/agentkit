@@ -25,6 +25,8 @@ class Artifact:
         native_relative: Destination relative to the selected root.
         root: Agent discovery root or agentkit share root.
         template: Optional Jinja template name.
+        template_root: Optional packaged directory ``template`` resolves
+            against. ``None`` means the adapter's own ``template_dir``.
         source: Optional packaged static source file.
         executable: Whether writes enforce mode ``0o755``.
         seed_only: Write only when the native path is absent, then leave the
@@ -32,8 +34,9 @@ class Artifact:
             but does not own.
 
     Raises:
-        ValueError: Both or neither content sources are set, or the native path
-            is absolute, escapes its root, or is empty.
+        ValueError: Both or neither content sources are set, ``template_root``
+            is set without ``template``, or the native path is absolute,
+            escapes its root, or is empty.
     """
 
     key: str
@@ -41,6 +44,7 @@ class Artifact:
     kind: ArtifactKind = "config"
     root: Literal["agent", "share"] = "agent"
     template: str | None = None
+    template_root: Path | None = None
     source: Path | None = None
     executable: bool = False
     seed_only: bool = False
@@ -48,6 +52,8 @@ class Artifact:
     def __post_init__(self) -> None:
         if (self.template is None) == (self.source is None):
             raise ValueError("Artifact requires exactly one of template or source")
+        if self.template_root is not None and self.template is None:
+            raise ValueError("Artifact template_root requires template")
         if not self.key.strip():
             raise ValueError("Artifact key must be a non-empty identifier")
         if self.native_relative.is_absolute():

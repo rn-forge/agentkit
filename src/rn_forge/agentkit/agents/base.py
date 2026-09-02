@@ -6,6 +6,7 @@ and staged paths and provides common validation and rendering helpers.
 
 from __future__ import annotations
 
+import inspect
 from abc import ABC, abstractmethod
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal
@@ -38,6 +39,12 @@ class AgentAdapter(ABC):
     version = "builtin"
     binary_name: str | None = None
     cli_extension: "typer.Typer | None" = None
+    _defaults_suffix: str | None = None
+    """Extension of the packaged scope-defaults file (``.json``, ``.toml``, ...).
+
+    ``None`` means this adapter's defaults are schema-only, with nothing packaged to
+    merge or promote into.
+    """
 
     @abstractmethod
     def schema(self) -> type[BaseModel]:
@@ -70,6 +77,13 @@ class AgentAdapter(ABC):
         """
 
     @abstractmethod
+    def _global_artifacts(self) -> list[Artifact]:
+        """Return every file managed for the global scope, in declaration order."""
+
+    @abstractmethod
+    def _local_artifacts(self) -> list[Artifact]:
+        """Return every file managed for the local scope, in declaration order."""
+
     def artifacts(self, scope: Scope) -> list[Artifact]:
         """Return every file managed for the requested scope.
 
@@ -79,6 +93,9 @@ class AgentAdapter(ABC):
         Returns:
             Ordered artifact declarations, including exactly one ``config``.
         """
+        return (
+            self._global_artifacts() if scope == "global" else self._local_artifacts()
+        )
 
     def parse_native_text(self, text: str, artifact: Artifact) -> dict[str, Any]:
         """Parse rendered native text using an artifact's on-disk format.
@@ -104,8 +121,14 @@ class AgentAdapter(ABC):
         return []
 
     def defaults(self, scope: Scope) -> dict[str, Any]:
-        """Return schema defaults for a scope."""
-        return defaults_for(self.schema())
+        """Return schema defaults merged with any packaged scope defaults."""
+        schema_defaults = defaults_for(self.schema())
+        path = self.defaults_path(scope)
+        if path is None or not path.exists():
+            return schema_defaults
+        return (
+            ConfigMerger(self.schema()).merge(schema_defaults, read_config(path)).config
+        )
 
     def is_native_hook_artifact(self, artifact: Artifact) -> bool:
         """Report whether an artifact's entire native content is hook wiring.
@@ -130,7 +153,9 @@ class AgentAdapter(ABC):
         <rn_forge.agentkit.core.manager.capture_assets>`. ``None`` means this adapter's
         defaults are schema-only, with nothing packaged to promote into.
         """
-        return None
+        if self._defaults_suffix is None:
+            return None
+        return self.package_dir / "defaults" / f"{scope}{self._defaults_suffix}"
 
     def read_managed_config(self, path: Path) -> dict[str, Any]:
         """Read an optional agentkit-managed source file."""
@@ -185,9 +210,76 @@ class AgentAdapter(ABC):
         return Path(scope_root) / self.name / "rendered" / managed.native_relative
 
     @property
+    def package_dir(self) -> Path:
+        """Return the packaged directory containing this adapter's own module.
+
+        Uses ``inspect`` rather than ``__file__`` because the base class cannot use its
+        own ``__file__`` to find a *subclass's* package directory — this works for
+        third-party adapters too.
+        """
+        return Path(inspect.getfile(type(self))).parent
+
+    @property
+    def template_dir(self) -> Path:
+        """Return the packaged Jinja template directory for this adapter."""
+        return self.package_dir / "templates"
+
+    @property
+    def _assets_dir(self) -> Path:
+        return self.package_dir / "assets"
+
+    @property
+    def _shared_scripts_dir(self) -> Path:
+        return Path(__file__).parents[1] / "assets" / "scripts"
+
+    @property
+    def _shared_instructions_dir(self) -> Path:
+        return Path(__file__).parents[1] / "assets" / "instructions"
+
+    @property
     def shared_skills_dir(self) -> Path:
         """Return the packaged agent-neutral skill source tree."""
         return Path(__file__).parents[1] / "assets" / "skills"
+
+    @property
+    def _skills_dir(self) -> Path:
+        """Return this adapter's native skills root, e.g. ``.claude/skills``."""
+        return Path(f".{self.name}") / "skills"
+
+    def _guard_core_artifact(self) -> Artifact:
+        """Declare the guard script every adapter's hooks depend on."""
+        return Artifact(
+            "hooks/guard-core.sh",
+            Path("_common/hooks/guard-core.sh"),
+            kind="hook",
+            root="share",
+            source=self._shared_scripts_dir / "guard-core.sh",
+        )
+
+    def _hook_script_artifacts(self, names: tuple[str, ...]) -> list[Artifact]:
+        """Declare packaged, per-agent executable hook scripts by filename."""
+        return [
+            Artifact(
+                f"hooks/{name}",
+                Path(self.name) / "hooks" / name,
+                kind="hook",
+                root="share",
+                source=self._assets_dir / "hooks" / name,
+                executable=True,
+            )
+            for name in names
+        ]
+
+    def _post_edit_format_artifact(self) -> Artifact:
+        """Declare the local-scope post-edit formatting hook script."""
+        return Artifact(
+            key="hooks/post-edit-format.sh",
+            native_relative=Path(self.name) / "hooks" / "post-edit-format.sh",
+            kind="hook",
+            root="share",
+            source=self._shared_scripts_dir / "post-edit-format.sh",
+            executable=True,
+        )
 
     def skill_artifacts(self, native_skills_dir: Path) -> list[Artifact]:
         """Declare every packaged skill file beneath an agent's skills root.
@@ -215,6 +307,7 @@ class AgentAdapter(ABC):
                         native_relative=native_skills_dir / rendered,
                         kind="skill",
                         template=relative.as_posix(),
+                        template_root=root,
                     )
                 )
             else:
@@ -241,71 +334,53 @@ class AgentAdapter(ABC):
         Rendering rather than merely compiling is deliberate: it also catches an
         undefined variable under ``StrictUndefined``.
         """
-        engine = RenderEngine(self.shared_skills_dir)
         errors: list[str] = []
         for artifact in self.skill_artifacts(native_skills_dir):
             if artifact.template is None:
                 continue
             try:
-                engine.render_template(artifact.template, {"agent": self.name})
+                self.render_skill_artifact(artifact)
             except RenderError as exc:
                 errors.append(f"{artifact.template}: {exc}")
         return errors
 
+    def _render_context(
+        self, artifact: Artifact, merged_config: dict[str, Any]
+    ) -> dict[str, Any]:
+        """Return the Jinja context for a templated artifact, keyed by ``kind``."""
+        if artifact.kind == "skill":
+            return {"agent": self.name}
+        if artifact.kind == "doc":
+            return {}
+        return {"config": merged_config}
+
     def render_artifact(
         self, artifact: Artifact, merged_config: dict[str, Any], scope: Scope
     ) -> str | bytes:
-        """Render a template artifact or read a packaged static artifact.
-
-        Raises:
-            ValueError: A non-primary template cannot be located or rendered.
-        """
+        """Render a template artifact or read a packaged static artifact."""
         if artifact.source is not None:
             return artifact.source.read_bytes()
         if artifact.key == "config":
             return self.render(merged_config, scope=scope)
-        if artifact.template is None:
-            raise ValueError(f"Cannot render templated artifact: {artifact.key}")
-        return RenderEngine(self.template_root(artifact)).render_template(
-            artifact.template, {"config": merged_config}
+        assert artifact.template is not None
+        root = artifact.template_root or self.template_dir
+        return RenderEngine(root).render_template(
+            artifact.template, self._render_context(artifact, merged_config)
         )
-
-    def template_root(self, artifact: Artifact) -> Path:
-        """Return the packaged directory ``artifact.template`` is resolved against.
-
-        Adapters that render some artifacts from a directory other than
-        ``template_dir`` override this rather than only :meth:`render_artifact`,
-        so ``doctor`` can name a template artifact's source file without
-        re-deriving the same dispatch a second time and drifting from it.
-
-        Raises:
-            ValueError: The adapter declares no template directory.
-        """
-        template_dir = getattr(self, "template_dir", None)
-        if not isinstance(template_dir, Path):
-            raise ValueError(f"Cannot render templated artifact: {artifact.key}")
-        return template_dir
 
     def source_path(self, artifact: Artifact) -> Path | None:
         """Return the packaged file an artifact's content is produced from.
 
         For a static artifact this is the copied file; for a templated one, the
-        template. The primary ``config`` artifact resolves to its template too,
-        even though the *values* come from the merged layer chain — use
-        ``agentkit diff`` to see those.
-
-        Returns:
-            An absolute packaged path, or ``None`` when the adapter declares no
-            template directory to resolve the template against.
+        template. The primary ``config`` artifact resolves to its template too, even
+        though the *values* come from the merged layer chain — use ``agentkit diff`` to
+        see those.
         """
         if artifact.source is not None:
             return artifact.source
         if artifact.template is None:
             return None
-        try:
-            return self.template_root(artifact) / artifact.template
-        except ValueError:
-            return None
+        return (artifact.template_root or self.template_dir) / artifact.template
 
     def template_errors(self) -> list[str]:
         """Return template compilation errors, if the adapter uses templates."""

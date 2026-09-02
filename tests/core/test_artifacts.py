@@ -21,7 +21,7 @@ class ExampleAdapter(AgentAdapter):
     def schema(self) -> type[ExampleConfig]:
         return ExampleConfig
 
-    def artifacts(self, scope: Scope) -> list[Artifact]:
+    def _artifacts(self) -> list[Artifact]:
         return [
             Artifact("config", Path(".example/config.txt"), template="config.j2"),
             Artifact(
@@ -32,6 +32,12 @@ class ExampleAdapter(AgentAdapter):
                 executable=True,
             ),
         ]
+
+    def _global_artifacts(self) -> list[Artifact]:
+        return self._artifacts()
+
+    def _local_artifacts(self) -> list[Artifact]:
+        return self._artifacts()
 
     def render(self, merged_config: dict[str, Any], *, scope: Scope = "global") -> str:
         return f"value={merged_config['value']}\n"
