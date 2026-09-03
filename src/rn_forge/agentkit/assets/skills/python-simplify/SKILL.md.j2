@@ -1,0 +1,361 @@
+---
+name: python-simplify
+description: Sweep an entire Python codebase — not a diff — for accidental complexity, and emit a phased, executable refactor plan ordered by whether each phase can change behaviour. Built for repos largely written by AI models, where the characteristic debt is duplication across siblings, defensive code for impossible states, abstractions with one implementation, and rationale essays in docstrings. Covers library, CLI, Django and FastAPI code, with extra
+  ORM and HTTP-boundary signatures for the web ones. Produces a standalone dated review doc in the repo's own output directory, with every module given an explicit act/park/fine verdict and every finding a stable id, so re-runs build on the last sweep instead of redoing it; offers to promote the result into the repo's design record rather than writing there itself. Can then execute one phase — or one finding — at a time under a test-suite-is-the-contract stop rule. Use when the user asks to "reduce complexity", "review the whole codebase for maintainability", "clean up AI-generated code", "find the accidental complexity", or wants a refactor plan rather than a bug review. Does not commit or push.
+{% if agent == "claude" %}allowed-tools: Read, Write, Edit, Bash, Glob, Grep, Agent, AskUserQuestion
+{% endif %}---
+
+# Python simplify
+
+A whole-codebase sweep for **accidental complexity** — code that is harder to
+read than the problem requires. This is not a bug hunt (`/code-review` does
+that) and not a diff review (`/simplify` does that). It reads modules nobody
+has touched recently, on the theory that unchanged code is exactly where
+complexity accretes unobserved.
+
+The deliverable is **a phased plan another session can execute without making
+design decisions**, not a findings list. A findings list gets skimmed; a plan
+with one commit per phase, a named stop rule, and the counter-argument recorded
+next to each fix gets done.
+
+Three properties make the output worth more than a generic "clean this up" pass:
+
+1. **Every module gets a verdict.** Act, park, or fine — including the ones you
+   found nothing in. Without an explicit park list the next run re-reviews the
+   whole tree and the exercise never converges.
+2. **Phases are ordered by behaviour risk, not by dependency.** Everything that
+   provably cannot change observable behaviour goes first, so the suite is
+   proven green before anything that can.
+3. **Each finding carries its rejected alternative.** The reason a fix stopped
+   where it did is the part that decays fastest and costs the most to
+   rediscover. Write it down or a later session undoes the reasoning.
+
+## 0. Mode
+
+**The default is a full sweep.** Bare invocation, or anything that isn't one of
+the narrower modes below, runs §1–§5 across the whole tree.
+
+| Invocation | Mode |
+|---|---|
+| bare, or anything unrecognized | **full sweep** — §1–§5 over the whole tree |
+| a path or module name is named | **scoped sweep** — §1–§5 over that subtree only |
+| `--sweep` / "just tell me what's there" | **sweep only** — §1–§3, stop before writing the plan |
+| `--execute <phase>` / "do phase B" | **execute** (§6) one phase of an existing plan |
+| `--fix <id>` / "fix B2" | **fix** (§6) one finding of an existing plan |
+| `--promote` / "put it in the specs" | **promote** (§5.3) an existing review into the design record |
+
+### 0.1 A sweep builds on the last sweep
+
+Before anything else, read the output directory §5.1 resolves — `context.md`
+(§5.2) for where things live, and the newest `complexity-review-*.md` for what
+was already decided. Then, in the new review:
+
+- Findings marked **done** stay done. Do not re-derive a fix that has already
+  shipped; carry the line forward with its date so the history survives.
+- Modules marked **park** or **fine** are **not** re-read unless `git log` shows
+  the file changed since that review's date. Carry their verdict forward and say
+  in the new review that you did.
+- Findings marked **open** are re-checked against the current code — the fix may
+  have become unnecessary, or the module may have moved — and then carried
+  forward, keeping their original id.
+
+Carry ids forward unchanged. An id that meant one thing in the March review and
+something else in the June one makes `--fix B2` ambiguous and makes the two
+documents impossible to read together.
+
+**A full clean sweep is: delete the output directory's contents and run again.**
+That is the supported reset — there is no `--force` flag, and nothing outside
+that directory needs undoing, which is exactly why the review does not write
+into the design record on its own (§5.3).
+
+## 1. Orient before reading code
+
+Cheap, and it changes what counts as a finding.
+
+- **Repo conventions** — `CLAUDE.md`, `AGENTS.md`, `.cursorrules`, contributing
+  docs. These frequently record deliberate trade-offs. A "finding" that a
+  documented decision already covers is noise, and proposing it burns the
+  user's trust in the rest of the list.
+- **The design record**, if there is one. Look for `docs/specs/`, `docs/adr/`,
+  `docs/architecture/`, `doc/`, `documentation/`, `rfcs/`, and whatever
+  `CLAUDE.md`/`AGENTS.md`/`README.md` point at — repos put it in more places
+  than the conventional three. Prior phases tell you what was already
+  refactored and what was deliberately parked. If discovery finds **nothing**,
+  or finds two plausible candidates and no way to choose, ask the user where it
+  lives rather than guessing{% if agent == "claude" %} (`AskUserQuestion`, offering the candidates
+  you found plus "no design record"){% endif %}; record the answer in `context.md` (§5.2) so no
+  later run asks again.
+- **The command vocabulary** — `Taskfile.yml`, `Makefile`, `noxfile.py`,
+  `tox.ini`, `pyproject.toml` `[tool.*]`. Whatever the repo uses to run
+  lint/typecheck/test is what you will use. **Never invoke `pytest`, `ruff`,
+  `mypy` or `uv` directly if the repo has a wrapper** — several repos enforce
+  this with a CI linter.
+- **The framework**, if any — `grep -rlE 'django|fastapi|flask|sqlalchemy' pyproject.toml setup.cfg requirements*.txt`,
+  or the presence of `manage.py`, `settings.py`, an `app = FastAPI()`. If one is
+  found, load `references/web-framework-signatures.md` alongside the base
+  signatures in §3; it adds nine signatures and a fourth behaviour class that
+  the base file deliberately does not carry. Skip it for a library or a CLI —
+  it is dead weight there.
+- **The test suite's shape** — how many tests, how fast, what they assert on.
+  This is the single most important input: the refactor plan's stop rule is
+  "the suite is the contract", which is only sound if the suite is meaningful.
+  If coverage of the modules you are about to change is thin, say so in the
+  plan and make "add the characterization test first" the phase's step 1.
+
+## 2. Measure, then read
+
+Measurement narrows where to read. It does not produce findings on its own —
+every metric below has a legitimate reason to be high, and shipping the metric
+as the finding is the classic failure of this kind of review.
+
+Run analysis tools **ephemerally** (`uvx <tool>`, `pipx run <tool>`) so the
+review never adds a dependency. If the repo already has a tool configured, use
+its configuration rather than your own flags.
+
+```bash
+# size and shape — the first cut
+find . -name '*.py' -not -path './.venv/*' -not -path '*/node_modules/*' \
+  | xargs wc -l | sort -rn | head -40
+
+# complexity / arity / length signals (ruff needs no config for an ad-hoc select)
+uvx ruff check --select C901,PLR0911,PLR0912,PLR0913,PLR0915 --statistics .
+
+# simplification, dead code, redundancy signals
+uvx ruff check --select SIM,RET,ARG,ERA,PIE,PERF,FURB,TRY,B --statistics .
+
+# maintainability index + per-function complexity, ranked
+uvx radon mi -s -o SCORE . | head -30
+uvx radon cc -s -a -o SCORE . | head -40
+
+# web repos only: Django idiom and event-loop-blocking signals
+uvx ruff check --select DJ,ASYNC --statistics .
+
+# genuinely unreferenced code (expect false positives on dynamic dispatch —
+# heavily so in a web repo: views named as strings in urls.py, signal
+# receivers, model methods used only from templates)
+uvx vulture . --min-confidence 80
+
+# churn: files changed most often are where comprehension debt costs most
+git log --format=format: --name-only --since='18 months ago' \
+  | grep '\.py$' | sort | uniq -c | sort -rn | head -25
+```
+
+Then **read every module in the tree**, ranked by the above. Reading is not
+optional and cannot be replaced by the metrics — the highest-value findings in
+this kind of codebase (duplication across sibling classes, an abstraction with
+one implementation, defensive code for impossible states) score *well* on every
+metric above, because each individual function is short and simple. The
+complexity is in the arrangement, not the functions.
+
+For a tree over ~40 modules, fan out: {% if agent == "claude" %}one `Agent` (subagent_type
+`Explore`) per top-level package, each handed
+`references/python-complexity-signatures.md` and asked to return findings in the
+§3 shape{% else %}one pass per top-level package, carrying only
+`references/python-complexity-signatures.md` and the §3 shape into each, so a
+long tree does not blur the signatures{% endif %}. Fan-out is for *coverage*; you still read the
+modules that come back with the heaviest findings yourself before writing them
+into the plan.
+
+## 3. Classify each finding
+
+Load `references/python-complexity-signatures.md` for what to look for — it is
+the substance of this skill, organized by the specific ways model-written
+Python accretes complexity. Its last two sections are the ones that keep the
+list honest: *What is not a finding* suppresses the false positives, and *When
+the rule points the other way* covers the cases where a rule this skill leans on
+is wrong for the module in front of you. Read both before you fix the act/park
+line — most of the judgment in this review is there, not in the signatures.
+
+If §1 found a web framework, load `references/web-framework-signatures.md` too
+and treat its behaviour-class section as overriding §4's ordering.
+
+Record each finding in this shape (`references/finding-shape.md` has the full
+template and a worked example):
+
+- **id** — phase letter + number, assigned in §4 (`B2`). This is the handle
+  `--fix` takes, so it is stable for the life of the finding: a re-run carries
+  an existing finding's id forward unchanged and only mints new ids for
+  genuinely new findings, even when that leaves the letters out of order.
+- **status** — `open` or `done` (with the date it was done). New findings are
+  `open`; §6 is what flips one to `done`.
+- **module and current size** — `core/doctor.py`, 436 lines. Concrete numbers,
+  and a target where one is meaningful. "~280 lines with the decision logic
+  visible" is checkable; "simpler" is not.
+- **the finding** — what is duplicated, over-general, or unreadable, stated as
+  a fact about the code, not a judgment.
+- **the fix** — specific enough to execute, with the code sketch if the shape
+  is not obvious from a sentence.
+- **behaviour class** — `preserving`, `changes-output`, or `adds-surface`.
+  Decide this by argument, not by hope, and write the argument down. "Both
+  bodies are byte-identical, so lifting one to the base is preserving" is an
+  argument. "This should be safe" is not.
+- **the rejected alternative** — the more thorough variant you are not taking,
+  and why. Also the *wrong* fix a reader might reach for, pre-empted.
+- **tests affected** — for preserving findings, which suite proves it. For
+  output-changing ones, which assertions must change; those changed assertions
+  are the deliverable, so name them.
+- **docs affected** — modules listed in an API reference, a nav file, an
+  architecture page describing the contract you are changing.
+
+**Then decide what not to do.** Every module you read that needs nothing gets
+one line on the **fine** list. Every module that needs something you are
+deliberately not doing now gets a line on the **park** list *with the reason*.
+Keep the running list as you read — §5.1 requires one line for *every* module
+read, and reconstructing it at write-up time is how modules go missing.
+Typical park reasons that are correct: the module is subtle and currently
+correct (merge engines, parsers, concurrency); the fix changes signatures
+across half the callers for a readability gain; the fix is right but wants its
+own test work first. A park list entry is a decision, not a TODO.
+
+## 4. Phase the findings
+
+Rules in full: `references/phasing-rules.md`. In short:
+
+- Group by behaviour class first, then by module. Order **preserving →
+  changes-output → adds-surface**. Within preserving, order by how much later
+  phases depend on the result.
+- One phase, one commit, one green gate. Each phase must be independently
+  revertable and must end at the repo's own full validation command.
+- Give each phase an explicit **behaviour contract sentence**. For preserving
+  phases the sentence is: *the test suite passes unchanged; a test that needs a
+  changed assertion is a signal the refactor changed behaviour — stop and
+  report rather than updating the assertion.* This one rule is what makes a
+  large refactor safe to hand to another session, and it must appear verbatim
+  in the plan.
+- Cap it. Five phases is a plan; twelve is a wish list that will be abandoned
+  at phase three. If you have twelve, the bottom seven are a park list.
+- Re-state the repo conventions that survive the refactor (typing strictness,
+  the command entrypoint, test conventions the plan must not violate), so the
+  executing session does not have to re-derive them from `CLAUDE.md`.
+
+## 5. Write the plan, after showing it
+
+Summarize to the user first, on one screen: findings per module, the phase
+breakdown with behaviour class, and the park list. Ask for a go/no-go and for
+whether to trim any phase — the park/act line is a judgment about their
+priorities, not yours. {% if agent == "claude" %}Use `AskUserQuestion` if a real fork exists; otherwise
+state the split in a few lines and proceed.{% else %}If a real fork exists, ask it as a
+numbered question and wait; otherwise state the split in a few lines and proceed.{% endif %}
+
+### 5.1 Write the review to the repo's review output directory
+
+The review is a work product, not a design decision. It lands where the
+developer can read, keep, or discard it without the repo's design record moving
+underneath them. **Resolve the output directory, first hit wins:**
+
+| Condition | Output directory |
+|---|---|
+| the invocation named a path | that path |
+| `.rn-forge/agentkit/` exists (an agentkit-managed repo) | `.rn-forge/agentkit/output/python-simplify/` |
+| `docs/reviews/` already exists | `docs/reviews/` |
+| otherwise | `.python-simplify/` at the repo root |
+
+Create the directory if it is missing, but **never stand up a `docs/` tree that
+is not already there** — a review is not a reason to start a docs site. If the
+repo's `.gitignore` carries a generated block (agentkit writes one), do not
+hand-edit it to cover the output path; leave it alone and say so in the summary.
+
+Write `complexity-review-<YYYY-MM-DD>.md`, self-contained, with its own heading
+numbering — it does not inherit a host document's section numbers. It carries,
+in order:
+
+1. **Origin and date** — what was swept, what was deliberately not swept, why.
+2. **Behaviour summary** — which phases are preserving and which are not.
+3. **The phases**, in §4's order, each with its behaviour contract sentence.
+4. **Verdicts** — *every module read gets exactly one line*, marked `act` (with
+   the finding id), `park` (with the reason), or `fine`. A complete list, one
+   line per module, not a prose paragraph naming the interesting few. A sweep
+   that omits a module it read has failed §3 no matter how good its phases are,
+   and the next run cannot converge because it has no way to tell "read and
+   fine" from "never read".
+5. **Carried forward** — what a prior review already settled (§0.1): findings
+   done, verdicts inherited unchanged, and the date they came from.
+
+Every finding heading carries its id and status: `### B2 — collapse the two
+loader branches (open)`. That line is what `--fix B2` matches and what §6
+rewrites on success.
+
+### 5.2 Write the context file
+
+Alongside the review, write `context.md` — the orientation §1 produced, so the
+next run does not rediscover it. Nothing else: **no findings, no verdicts, no
+plan.** Keeping it to orientation is what makes "delete the directory and
+re-run" (§0.1) a clean reset rather than a way to lose decisions.
+
+It records: the design record's location (including "asked the user, they said
+none"), the repo's format/lint/test/validate commands, the framework detected,
+the test suite's shape and where coverage is thin, and the handful of files
+worth reading first in this repo. Head it with the date and the commit SHA it
+was written from.
+
+**Treat it as a cache, not as truth.** Before relying on any path it names,
+check the path still exists; before trusting a command, check it is still in the
+`Taskfile.yml`/`Makefile`/`pyproject.toml`. Anything stale gets re-derived and
+the file rewritten — never quietly worked around. If the recorded SHA is
+hundreds of commits behind, re-do §1 outright; it is cheap.
+
+### 5.3 Promote into the design record only when asked
+
+Whether a finding earns a permanent place in the repo's decision history is the
+developer's call, not this skill's. After §5.1, offer promotion in one line and
+stop there unless they take it. Promote into the location `context.md` records
+— if that is "none", there is nothing to promote into. {% if agent == "claude" %}`AskUserQuestion` is the right shape for the
+offer.{% else %}Ask it as a numbered question and wait.{% endif %}
+
+On a yes, and only then:
+
+| Repo has | Promote as |
+|---|---|
+| a numbered design record (`docs/specs/*.md` with `## N.` sections) | a new top-level section, numbered in sequence, **appended** |
+| `docs/adr/` | a new ADR, in that directory's existing format |
+| neither | nothing to promote into — the §5.1 file *is* the record; link it from `CLAUDE.md`/`AGENTS.md` instead |
+
+Match the surrounding document's voice and heading depth exactly, and **append
+only**: do not rewrite surrounding prose, renumber neighbouring sections, or
+revise a framing paragraph so it mentions the new one. At most add a single
+pointer line where the document already points at its other sections. An
+appended section reviews as a clean diff; edits threaded through a document
+somebody else wrote do not.
+
+If the promotion is a new *page* rather than a section in an existing one, and
+the docs build has a nav file (`mkdocs.yml`), add it there or the build fails it
+as an orphan.
+
+## 6. Execute and fix modes
+
+Same procedure, different scope: `--execute <phase>` does one whole phase,
+`--fix <id>` does one finding. **One of either per invocation. Never two.**
+
+1. Find the plan — the path given in the invocation, else the newest
+   `complexity-review-*.md` in the directory §5.1 resolves, else the design
+   record section a promotion (§5.3) created. Read the target's section and the
+   conventions it re-states. If the id or phase is already marked `done`, stop
+   and say so rather than doing it twice.
+
+   For `--fix`, check the ordering §4 gave it first: if the finding sits in a
+   later phase and an earlier preserving phase it builds on is still `open`,
+   say so and let the user choose — doing a `changes-output` finding while the
+   preserving groundwork underneath it is unbuilt is how a "small fix" turns
+   into an unreviewable diff. A single finding still gets the full gate and the
+   full behaviour contract; `--fix` narrows the scope, not the rigour.
+2. Confirm the working tree is clean and the gate is green **before** starting.
+   A pre-existing failure discovered mid-refactor is indistinguishable from one
+   you caused.
+3. Make the changes, including the docs the phase names.
+4. Run the repo's format, then its full validation command.
+5. **Apply the phase's behaviour contract.** On a preserving phase, if a test
+   fails, do not touch the assertion. Diagnose whether the refactor changed
+   behaviour; if it did, revert and report. This is the rule the whole plan
+   rests on — a session that "fixes" an assertion to get green has silently
+   converted a safe refactor into an unreviewed behaviour change.
+6. **Mark it done in the review**: flip the finding's (or every finding in the
+   phase's) status to `done` with today's date, in the `complexity-review-*.md`
+   the work came from. Leave everything else in that document untouched. This
+   is the only edit §6 makes to the review, and it is what lets §0.1 build on
+   the sweep instead of re-proposing work that has shipped.
+7. Report: what changed, the gate result, and any finding the work surfaced
+   that belongs in a later phase. Do not fold a newly-found improvement into
+   the current phase; add it to the plan as a new `open` finding with a fresh
+   id.
+
+Do not commit or push unless asked.

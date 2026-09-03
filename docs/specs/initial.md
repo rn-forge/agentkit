@@ -842,7 +842,9 @@ the same 2 pre-existing packaged-snapshot files noted above (unrelated to phase
 
 ## 13. Pending
 
-None. All items from phases 1–5 are resolved; see §12 for the closing entries.
+Phases 1–5 are resolved; see §12 for the closing entries. §15 specifies phase 6
+— finishing the adapter collapse §14.1 stopped short of, and the three core
+modules §14.4 parked — which is designed but not implemented.
 
 ______________________________________________________________________
 
@@ -1076,3 +1078,385 @@ modules were reviewed and judged fine as they are. No new features, flags,
 output modes, or dependencies belong in this phase — the value of the whole
 exercise depends on being able to say afterwards that nothing about the tool's
 behaviour changed.
+
+______________________________________________________________________
+
+## 15. Phase 6 — finish the adapter collapse, then the parked core modules
+
+Origin: a review of the phase 5 result on 2026-09-01. Phase 5 left two things
+undone. The adapter collapse in §14.1 stopped one step short — `render()`,
+`template_errors()`, and `parse_native()` are still per-adapter, and two of the
+three are duplicated rather than merely present. And §14.4 deliberately parked
+`core/config.py`, `core/diff.py`, `core/doctor.py`, and `core/state.py` so that
+phase 5 could claim byte-identical behaviour; this phase un-parks three of them.
+`core/config.py` stays parked.
+
+Like §14, this is written as a hand-off: a session that has read §§1–14 should
+be able to execute a phase end to end without further design decisions. Unlike
+§14, this phase is *not* uniformly behaviour-preserving — phases A and B are, C
+and D change observable output, and E adds CLI surface. Each phase below says
+which it is.
+
+### 15.0 Ground rules
+
+**One phase, one commit, one green gate.** A → B → C → D → E, each ending at
+`task format && task validate` clean and independently revertable. The order is
+by risk, not dependency: A and B cannot change behaviour, so they go first and
+establish that the suite is green before anything that can.
+
+**Behaviour-preserving means the test suite is the contract.** In phases A and
+B, `tests/` should pass unchanged. A test that needs a *changed assertion* is a
+signal that the refactor changed behaviour — stop and report it rather than
+updating the assertion. In phases C, D, and E the changed assertions are the
+deliverable and are named explicitly below.
+
+**The existing conventions still apply.** No positional indexing into
+`artifacts()` or operation-result lists (select by `.key` / `.artifact`); no new
+`# type: ignore`; `task` remains the only entrypoint; `pyright src` stays at
+zero errors in strict mode.
+
+**Docs move with the code.** `docs/reference/python-api.md` lists modules
+explicitly and `mkdocs.yml`'s `nav` is the page structure — a module added or
+renamed without updating them fails `task lint`.
+
+### 15.1 Phase A — finish §14.1: the adapter contract becomes schema plus two lists
+
+Behaviour-preserving. `agents/claude/adapter.py` (113 lines) and
+`agents/codex/adapter.py` (116 lines) still carry three method bodies each that
+either duplicate the other adapter or duplicate `core/io.py`. Target: the
+abstract surface drops from five methods to three — `schema()`,
+`_global_artifacts()`, `_local_artifacts()` — with the remaining per-adapter
+variation expressed as class attributes next to `_defaults_suffix`.
+
+**A1 — `render()` moves to the base, with the dump mode as a declaration.** The
+two bodies are identical except `model_dump(mode="json")` versus
+`mode="python")`. That difference is load-bearing as a *declaration* — TOML has
+native datetime and date types that JSON mode would stringify — even though
+today's schemas render identically either way. So it belongs on the class:
+
+```python
+# base.py
+_dump_mode: Literal["json", "python"] = "json"
+
+def render(self, merged_config: dict[str, Any], *, scope: Scope = "global") -> str:
+    """Validate merged configuration and render it through the scope template."""
+    validated = (
+        self.schema()
+        .model_validate(merged_config)
+        .model_dump(mode=self._dump_mode, exclude_none=True)
+    )
+    return RenderEngine(self.template_dir).render_template(
+        f"{scope}.j2", {"config": validated}
+    )
+```
+
+`CodexAdapter` sets `_dump_mode = "python"`; both overrides and the
+`@abstractmethod` go away. Record next to the attribute *why* it exists, so it
+is not "simplified" into a single mode later. Do **not** instead give the base a
+`_dump()` hook for subclasses to override — that is the same duplication with an
+extra indirection; the format difference is one enum value and the templates
+(`{{ config | tojson(indent=2) }}` versus `{{ config | to_toml }}`) are already
+the real extension point.
+
+**A2 — `template_errors()` moves to the base as-is.** §14.1 A4 already specified
+this ("byte-identical in both adapters — move it as-is") and it was not done;
+both adapters still define it and `AgentAdapter.template_errors()` is still a
+`return []` stub. Lift the body verbatim, replacing the stub:
+
+```python
+def template_errors(self) -> list[str]:
+    return [
+        *RenderEngine(self.template_dir).validate_templates(),
+        *RenderEngine(self._shared_instructions_dir).validate_templates(),
+        *self.skill_template_errors(self._skills_dir),
+    ]
+```
+
+This is output-identical for a schema-only third-party adapter too:
+`FileSystemLoader` over a directory that does not exist yields no templates, so
+the first term is empty, and `_shared_instructions_dir` and `shared_skills_dir`
+are always packaged.
+
+There is a "more correct" variant that derives the roots from each declared
+artifact's `template_root` across both scopes, so an adapter that declares no
+shared-instruction artifacts is not charged for their errors. It changes error
+*ordering* and so is not a free move. Do not take it in this phase; if it is
+ever wanted it is its own change with its own test update.
+
+**A3 — `parse_native()` is deleted from both adapters and becomes one concrete
+base method.** `core/io.read_config()` already dispatches on file extension,
+already handles TOML/YAML/JSON, and already enforces the mapping-root rule.
+Codex's override is a pure forward to it. Claude's is a hand-rolled
+reimplementation of what `read_config` does for `.json`, with a bespoke error
+string. The base already does the extension-based thing for the in-memory twin —
+`parse_native_text()` calls
+`loads_config(text, artifact.native_relative.suffix)` — so the two halves of one
+concept are currently implemented two different ways.
+
+```python
+def parse_native(self, path: Path) -> dict[str, Any]:
+    """Parse a native config file, choosing the loader by file extension."""
+    return read_config(path)
+```
+
+Behaviour deltas, all checked before writing this: `ConfigIOError` subclasses
+`ValueError`, so the documented `Raises:` contract holds and
+`BaseCommand.boundary()` still normalizes it into the `error: ...` exit. The
+only observable change is the message text on a malformed Claude settings file
+(`"Configuration root must be a mapping"` rather than
+`"Claude configuration root must be an object: <path>"`). **No test asserts
+either string** — the only `parse_native` assertions are
+`tests/agents/test_claude_adapter.py` and `tests/agents/test_codex_adapter.py`,
+both happy-path. The fake adapter in `tests/core/test_artifacts.py` defines its
+own `parse_native`; that override becomes redundant but is harmless, so leave
+it.
+
+**A4 — expected shape afterwards.** `ClaudeAdapter` around 55 lines,
+`CodexAdapter` around 70, each reading as "schema, two artifact lists, and the
+handful of declarations that differ". `CodexAdapter` keeps
+`is_native_hook_artifact()`; that is genuine per-adapter behaviour, not
+duplication.
+
+Docs to update in A: `docs/architecture/adapters.md` — the adapter contract
+section, which must stop listing `render`, `parse_native`, and `template_errors`
+as things a concrete adapter implements and start listing `_dump_mode` and
+`_defaults_suffix` as the declarations that replace them. The `Artifact`
+attribute table in §6.1 of this document is historical and stays as written.
+
+### 15.2 Phase B — make `core/doctor.py` readable
+
+Behaviour-preserving. 436 lines, and the verbosity is concentrated rather than
+spread: most of it is the same five-field `CheckResult` construction written
+eleven times. Target is roughly 280 lines with the decision logic visible.
+
+Do **not** split this into a `core/doctor/` package the way `core/manager.py`
+was split in §14.2. After B1–B4 it is one coherent module at a size that reads
+in one sitting, and a package would add a directory without adding a boundary.
+
+**B1 — split the artifact decision from the artifact construction.**
+`_artifact_result()` takes eight parameters, three of them booleans computed at
+the call site, and constructs `CheckResult` five times where each branch differs
+only in two literals. The precedence rule its docstring describes — unwritable
+beats drift beats stale beats absence — is buried under the repeated fields.
+Replace with a pure classifier returning just the outcome:
+
+```python
+def _artifact_status(
+    native: Path, *, exists: bool, differs: bool, stale: bool, rendered_exists: bool
+) -> tuple[Status, Severity]:
+    if not _parent_writable(native):
+        return "unwritable", "error"
+    if differs:
+        return "drift", "warning"
+    if stale:
+        return "stale", "warning"
+    if not exists:
+        return "unsynced" if rendered_exists else "missing", "warning"
+    return "ok", "info"
+```
+
+plus a single `CheckResult(...)` at the call site. `_seed_result()` folds into
+the same shape (`("seeded", "info")` when the file exists,
+`("missing", "warning")` otherwise) and stops being a separate function. Keep
+the existing rationale comments — the reason a seed file is never
+content-compared, and the reason `stale` points `target` at the staged copy
+rather than the native one — attached to the branches they explain.
+
+**B2 — default `severity` from `status`.** The mapping is 1:1 in nine of eleven
+cases (`ok`/`seeded` → info; `drift`/`stale`/`missing`/`unsynced`/`orphan` →
+warning; `invalid`/`unwritable` → error). The only genuine exception is the
+dependency check, where a missing `jq` is an error and a missing `gitleaks` is a
+warning. Add `_DEFAULT_SEVERITY: dict[Status, Severity]` and make
+`CheckResult.severity` optional, defaulting from it — a frozen dataclass needs
+`object.__setattr__` in `__post_init__` for this, which is acceptable here
+because it is one line next to the table it reads. The value is that the two
+real exceptions become visible *as* exceptions instead of hiding among fifteen
+identical literals. `--json` output is unaffected: `severity` is still a
+populated field on every result.
+
+**B3 — one orphan scan, not two.** The rendered-file scan in `check_agent` and
+the shared-hook scan in `check_environment` are the same loop, differing only in
+root, owning agent, and note string. Extract
+`_orphans(root, expected, *, agent, note) -> Iterator[CheckResult]`. Preserve
+the `sorted(root.rglob("*"))` ordering — the output order is asserted on in
+`tests/commands/test_cli.py`.
+
+**B4 — extract the artifact loop out of `check_agent`.** `check_agent` currently
+does five unrelated jobs in one 90-line body: schema validation, template
+validation, the per-artifact render-and-compare loop, the orphan scan, and the
+binary check. Move the loop to
+`_check_artifacts(adapter, scope, repo_root, scope_root, merged)`, returning
+both the results and the `expected_rendered` set the orphan scan needs.
+`check_agent` then reads as a five-line statement of what doctor checks, which
+is what a reader opens the file for.
+
+**B5 — delete the redundant function-level import.** `_expected_share_paths()`
+re-imports `registry` inside the function though it is already imported at
+module scope. There is no cycle to break; it is a dead line.
+
+**B6 — move the three-axis essay out of the module docstring.** The `status` /
+`severity` / `kind` explanation is design rationale, and this repo puts design
+rationale in `docs/architecture/`. Add a doctor section to
+`docs/architecture/index.md` (or a new page, which then needs a `nav` entry or
+`task lint` fails it as an orphan) and leave the module docstring at four lines
+plus a pointer. The `Status` literal's own docstring, which defines each value,
+stays in the module — that one is API reference, not rationale.
+
+### 15.3 Phase C — `core/state.py` hot paths and entry lifecycle
+
+Two performance fixes with no observable output change, then two lifecycle
+changes that do change output.
+
+**C1 — hoist the state load out of the artifact loops.** `store.get()` calls
+`load()`, which parses the whole `state.json` *and* runs the full per-entry
+field-and-type validation over every entry. It is called once per artifact
+inside the loops in `apply_resolved()` and `sync_adapter()`. With 23 packaged
+skill files there are around 30 artifacts per adapter per scope and a similarly
+sized state file, so one `global apply` runs a few thousand pointless entry
+validations for information that cannot change during the loop — nothing writes
+state until `record_many()` at the end. Load once above each loop into a local
+`prior_state: dict[str, dict[str, Any]]` and index it by the same
+`_resolved(native)` key `get()` uses. Behaviour-identical. Writes were already
+batched into one `record_many()` for exactly this reason; the reads simply never
+got the same treatment.
+
+**C2 — add `StateStore.remove_many()`.** `remove_owned_artifacts()` calls
+`store.remove()` once per file, and each call takes the advisory lock, does a
+full `load()`, and does a full `atomic_write()` of the entire file. Uninstalling
+around 30 artifacts is 30 lock-parse-rewrite cycles. Mirror `record_many()`: one
+lock, one load, one write. Behaviour-identical.
+
+**C3 — decide what prunes stale entries.** Today `stale_entries()` is reported
+by doctor as a warning and nothing anywhere removes them, so `state.json` grows
+without bound — after `agentkit project remove` in a repo, the global store
+still carries that repo's entries. A warning with no remedy is worse than no
+warning. Take the narrow fix: have the removal paths delete their own entries
+(`remove_owned_artifacts()` and `strip_native_hooks()` already know every path
+they touched, and after C2 that is one extra call), and leave `stale_entries()`
+reporting only what a genuinely external deletion left behind. Do **not** make
+doctor mutate state — doctor's contract is that it never writes.
+
+This changes doctor output for any scope that currently has accumulated stale
+entries. Expect `tests/core/test_state.py` and possibly
+`tests/commands/test_cli.py` to need new assertions; that is authorized here,
+and a test asserting that removal clears the entries is the deliverable.
+
+**C4 — name the remedy in the `load()` corruption error.** The strictness is
+well argued in the existing docstring and stays. The consequence is that one
+corrupt byte makes `doctor`, `apply`, `diff`, and `status` all fail at once, and
+the message does not tell the user that deleting the file is the recovery. Add
+that sentence to each `ValueError` raised there. Update the message assertions
+in `tests/core/test_state.py`.
+
+**C5 — the `_backup_run_timestamp` module global is out of scope.** It makes
+`backup_file()` non-reentrant and gives an embedding consumer that never calls
+`start_backup_run()` a timestamp frozen for the process lifetime. The clean fix
+is a `backup_run()` context manager entered by the root callback, or a
+contextvar. It is contained, the CLI is the only caller, and it touches
+signatures across `apply` and `remove` — so it is recorded here as known and
+deliberately deferred, not overlooked.
+
+### 15.4 Phase D — make `layered_changes()` agree with the merge it describes
+
+`core/diff.py` is 67 lines, pure, and correct in two of its three functions.
+`layered_changes()` simulates merging as **naive per-key overwrite**: it never
+consults `ConfigMerger`, so it does not honour `append_paths` — the schema
+fields marked `merge_strategy=append`, such as Claude's permission lists. For
+those paths the "Configuration layers" table reports the raw layer value as
+`After`, while the rendered artifact contains the packaged defaults *plus* that
+value. `agentkit diff` can therefore show `permissions.allow → ["Bash(foo)"]`
+for an artifact that actually receives fifteen entries.
+
+That is a correctness gap in the one command whose entire job is explaining
+provenance, and it also reaches `project status`, whose `local_overrides` column
+is built from the same call.
+
+**D1 — pass the append paths in and mark those rows.** `resolve_config()`
+already returns the layers list beside a `MergeResult` produced from the
+adapter's schema, so the plumbing is one argument:
+`layered_changes(layers, append_paths=ConfigMerger(adapter.schema()).append_paths)`.
+For a path in that set, the layer contributes rather than replaces — report it
+as such rather than as a replacement. Two presentation options; pick the first:
+
+- Prefix the `After` cell with `+` and show only the appended suffix. Keeps the
+  table four columns wide and matches how the merge actually reads.
+- Add a fifth "Strategy" column. Rejected: it is a column of `replace` with two
+  `append` rows in it, which is the same information at four times the width.
+
+Add `KeyChange.appends: bool = False` rather than encoding the distinction in
+the `after` value, so `--json` consumers get the fact structurally and the
+prefix stays a rendering choice.
+
+This changes `agentkit diff` output and the `layers` array under `--json`.
+Update `tests/core/test_diff.py` and the diff assertions in
+`tests/commands/test_cli.py`; a test that an append-merged path renders as an
+append and a replace-merged path is untouched is the deliverable.
+
+### 15.5 Phase E — `--verbose`, on stderr, behind stdlib logging
+
+There is currently no logging anywhere in the codebase: no `import logging`, no
+verbosity flag. Every byte of user feedback comes from `console.print` in
+`commands/`, and `core/` is silent by construction. That layering is a
+deliberate good — `core/` imports neither Rich nor Typer — and this phase must
+not break it.
+
+Coverage of the *mutating* commands is already good: `emit_operations()` prints
+one line per artifact with action, changed/unchanged, target path, backup path,
+and the drift warning. If anything `global apply` is too noisy at 30 skill
+lines, not too quiet. The gap is the work that happens between selection and
+output:
+
+| Path | Today |
+| -- | -- |
+| `scaffold_managed_source()` writing a new `config.toml` during apply | silent — produces no `OperationResult` |
+| Which config layers `resolve_config()` found versus missing | invisible outside `agentkit diff` |
+| `StateStore._locked()` falling back to unserialized when `flock` is unsupported | silent |
+| `_prune_empty_dirs()` during removal | silent |
+| Artifact skipped as unchanged versus genuinely rewritten | both print; the distinction is one word |
+
+Two things stay silent on purpose and must not be "fixed" here: `atomic_write()`
+swallowing a parent-directory fsync failure, and `registry.discover()` skipping
+a broken plugin. Both are recorded in `docs/architecture/safety-model.md`.
+
+**E1 — one `core/logging.py`.** It exposes `configure(verbosity, quiet)` and
+nothing else; core modules use plain `logging.getLogger(__name__)`. The handler
+is `rich.logging.RichHandler` bound to **stderr**. Stderr is a requirement, not
+a detail: stdout is a parse contract under `--json`, so verbose output there
+would break a caller mid-document. Putting it on stderr is what makes
+`--json --verbose` a legal and useful combination. `commands/` keeps owning all
+user-facing stdout output; `core/` only logs.
+
+**E2 — a counted `--verbose` / `-v` on the root callback**, resolved beside
+`--quiet` and `--json` and merged the same way `BaseCommand.__init__` merges
+those (Typer accepts them before and after the command name). One decision to
+record: `--quiet` currently means "suppress output", so `-q -v` needs a defined
+result. Take `-v` wins — it writes to stderr, `--quiet` governs stdout, and they
+are describing different streams. That is unlike `-q --json`, which stays
+mutually exclusive because both claim stdout. State this in the root callback's
+help and in `docs/guides/`.
+
+**E3 — what logs at which level.**
+
+- `-v` (INFO): resolved layer paths and whether each existed; the scope root in
+  use; managed-source scaffold writes; the `flock` fallback; per-artifact
+  "unchanged, skipped" versus "rewritten"; the state file path and entry
+  count.
+- `-vv` (DEBUG): per-key merge provenance; the template root and template name
+  resolved for each artifact; content hashes; the backup decision per file.
+
+Nothing at WARNING or above goes through logging — user-facing warnings stay in
+`commands/` where the existing output contract governs them.
+
+Docs to update in E: `docs/guides/` for the flag and the stdout/stderr split,
+and `docs/reference/python-api.md` for the new `core/logging` module.
+
+### 15.6 Out of scope for phase 6
+
+`core/config.py` was reviewed and stays parked — the merge engine is the one
+place where a subtle change is expensive and the current code is correct.
+`agents/*/assets/`, `defaults/`, `templates/`, and the `schema.py` modules stay
+as they are. `core/io.py`, `core/render.py`, `core/paths.py`, and
+`core/artifacts.py` were reviewed in this pass and need nothing. No new
+commands, output modes, or dependencies beyond the `--verbose` flag and the
+`rich.logging` handler in phase E, both of which use libraries already in the
+dependency set.

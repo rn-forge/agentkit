@@ -235,6 +235,57 @@ After selecting **Allow Once**, the command ran successfully. This confirmed
 approval-gated remote command execution on the Mac without permanently trusting
 the command.
 
+## Upgrade the macOS app and gateway
+
+The Homebrew cask upgrades only `OpenClaw.app`. The app-managed CLI and gateway
+are installed separately under `~/.openclaw`, so upgrade them independently:
+
+```bash
+brew upgrade --cask openclaw
+command -v openclaw
+openclaw --version
+openclaw update
+```
+
+If the update cannot enter maintenance, stop the gateway through launchd before
+retrying. Prefer this over killing the process directly:
+
+```bash
+openclaw gateway stop
+openclaw update
+```
+
+An update can replace the package successfully and then fail during its embedded
+Doctor run with this message:
+
+```text
+The update parent owns Gateway activation.
+```
+
+First confirm that `openclaw --version` reports the new version. Then complete
+the repair outside the updater and refresh the LaunchAgent definition:
+
+```bash
+openclaw gateway stop
+openclaw doctor --fix
+openclaw gateway install --force
+openclaw gateway status --deep
+openclaw health
+```
+
+If the gateway status and logs show that it is running and ready, but the app
+still reports **The update is installed, but Gateway health did not become
+ready**, the app may be retaining a failed post-update receipt. Quit OpenClaw
+completely, remove only that receipt, and relaunch:
+
+```bash
+defaults delete ai.openclaw.mac openclaw.postAppUpdateReceipt
+open -a OpenClaw
+```
+
+Do not clear the receipt until gateway health has been verified; otherwise it
+can hide a real startup failure.
+
 ## Current status
 
 The OpenClaw gateway, OpenAI model connection, Tailscale Serve connection, and
