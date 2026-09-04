@@ -1,0 +1,207 @@
+---
+name: spec-structure-setup
+description: Establish a spec tree with an explicit epics → features → stories hierarchy and release-scoped delivery slices (releases/release-1/, release-2/, ...), with stable IDs, one home per story, and an append-only progress log that is never sharded. Migrates an existing monolithic specification (a single multi-hundred-line spec carrying objective, decisions, epics and build history at once) into that tree without rewriting its content, leaving redirect stubs and fixing inbound links repo-wide — including references from README/CLAUDE.md/AGENTS.md that a docs linter cannot see. Records the taxonomy in the tree's own index page and links it from CLAUDE.md/AGENTS.md so future sessions inherit it. Safe to re-run — reconciles, adds epics and cuts releases rather than regenerating. Use when the user asks to "restructure the specs", "split the spec", "epics and stories", "define release scope", "plan release 2", or has a specification that has outgrown one file. Does not commit or push.
+{% if agent == "claude" %}allowed-tools: Read, Write, Edit, Bash, Glob, Grep, AskUserQuestion
+{% endif %}---
+
+# Spec structure setup
+
+Establishes a spec tree with one shape: **epics → features → stories** for *what* gets built, and
+**`releases/release-N/`** for *when* it ships. The two axes are deliberately separate files. A story
+has exactly one home — its feature file — and a release **links** to the stories in its scope rather
+than restating them. The moment a story's text exists in two places, one of them starts lying, and
+the release page is always the copy that rots.
+
+The other half of the shape is what does **not** get decomposed. A build history / progress log stays
+one append-only file. Sharding it across forty story files is the single most common way a
+restructure makes a repo worse: status stops being answerable in one read.
+
+This skill is content-preserving. Migrating a monolith **relocates and frames** — it does not rewrite
+decisions, soften commitments, or "clean up" prose. A restructure that also edits meaning produces a
+diff nobody can review.
+
+## 0. Mode
+
+If the invocation named a mode (`greenfield`, `migrate`, `reconcile`), use it. **Otherwise detect** —
+the tree is a stronger signal than the phrasing of the request:
+
+| Detected | Mode |
+|---|---|
+| A spec index written by a prior run exists (`docs/specs/index.md` carrying the taxonomy from §5) | **reconcile** (§6) |
+| A spec tree exists but is flat — one or more files over ~400 lines, or top-level headings covering objective *and* decisions *and* stories *and* history | **migrate** (§2–§5) |
+| No spec tree, or only a stub | **greenfield** (§3–§5) |
+
+Say which mode you picked and why in one line before proceeding, so a wrong guess is cheap to
+correct. If the invocation asked for a dry run, report what each step *would* write and touch no
+files.
+
+**Migrate is the mode that needs a go-ahead.** It rewrites the repo's design record and moves paths
+other files point at. Before writing anything, show the user the proposed mapping from §2 — old
+section → new file — and get agreement. Greenfield and reconcile are additive and don't need this.
+
+## 1. Detect the target repo's shape
+
+- **The spec tree's real location**: `docs/specs/`, `specs/`, `docs/adr/`, `design/`. Don't assume
+  `docs/specs/` — follow what the repo's own agent instructions point at.
+- **The monolith(s)**: file sizes and the top-level heading list (`grep -n '^## ' <spec>`). That
+  heading list *is* the migration mapping's input.
+- **Existing ID conventions.** If the repo already numbers things (`§14`, `E1`, `S2.3`, ticket keys),
+  **adopt the existing scheme** rather than imposing §4's. A restructure that renumbers everything
+  invalidates every reference in commit messages, PR titles and issue trackers — none of which you
+  can grep.
+- **Inbound references, repo-wide, not just under docs/**:
+  `grep -rn '<spec-path>' --include='*.md' --include='*.yml' .` — README, CLAUDE.md, AGENTS.md and
+  mkdocs nav all commonly point into the spec, sometimes at a **deep heading anchor**
+  (`initial.md#43-composable-adapters`). A docs linter typically walks only the docs directory, so
+  these rot silently. Collect them now; §5 fixes them.
+- **The docs system**, if any: `mkdocs.yml` (is `nav:` the source of page structure?), a docs linter,
+  an orphan-page check. This determines §5's nav obligations.
+- **Whether releases are already tracked elsewhere** — GitHub milestones, a CHANGELOG, a roadmap
+  page. If so, the `releases/` tree must point at that, not compete with it. Ask before creating a
+  second source of truth for shipped scope.
+
+## 2. Migration mapping — agree it before writing
+
+Produce a table mapping every top-level section of the monolith to its destination, and show it to
+the user. A typical monolith maps like this:
+
+| Monolith section | Destination |
+|---|---|
+| Purpose, objective, success criteria, non-goals | `overview.md` |
+| Locked decisions, architecture, config/CLI/adapter contracts | `decisions.md` (or the existing ADR log, if one exists — don't create a rival) |
+| Implementation epics and stories | `epics/E<n>-<slug>/` |
+| Build history, implementation progress, phase logs | `progress.md` — **one file, append-only, not sharded** |
+| Deliberate deferrals, pending work | `backlog.md`, or a `Deferred` section of the relevant epic |
+| Test strategy, definition of done | `overview.md`, or its own page if substantial |
+
+Rules for the mapping:
+
+- **Every section lands somewhere.** If something genuinely has no home, list it in the report as
+  dropped — never silently.
+- **Content moves verbatim** apart from heading-level shifts and link rewrites. Resist the urge to
+  edit while moving.
+- **Anything already implemented is history, not spec.** A "Phase 5 (implemented)" section belongs in
+  `progress.md`, not in an epic that reads as future work. Getting this wrong is what makes a
+  restructured spec look like a pile of unstarted work.
+
+## 3. The tree
+
+```
+<spec-root>/
+  index.md                    # taxonomy, ID scheme, status legend, epic table — see §5
+  overview.md                 # objective, success criteria, non-goals
+  decisions.md                # locked decisions (or a pointer to the existing ADR log)
+  progress.md                 # append-only build log — never sharded
+  backlog.md                  # deferred / not-yet-scoped work
+  epics/
+    E1-<slug>/
+      index.md                # epic scope, its feature list, status
+      F1.1-<slug>.md          # a feature: its stories, each with acceptance criteria
+  releases/
+    release-1/index.md        # scope: which stories ship, entry/exit criteria, status
+    release-2/index.md
+```
+
+Create only what the repo actually needs. `backlog.md` with nothing in it, or `release-3/` before
+release-1 has shipped, is scaffolding for its own sake — skip it and add it when there's content.
+Templates for the four index/feature shapes are in `assets/`; adapt them to the repo's existing prose
+style rather than pasting them cold.
+
+**A feature file holds its stories inline** unless a single story needs more than roughly a screen of
+acceptance criteria. One file per story is the default that produces the unusable forty-file tree —
+reach for it only when a story genuinely earns it.
+
+## 4. IDs, status, and the release axis
+
+- **ID scheme**: `E<n>` epic, `F<n>.<m>` feature, `S<n>.<m>.<k>` story. The prefix chain makes a bare
+  ID locatable without an index lookup.
+- **IDs are permanent.** Reorganizing the tree never renumbers. A story that moves to a different
+  epic keeps its original ID and gains a note saying where it moved from. Gaps in the sequence are
+  fine and are cheaper than a broken reference.
+- **Status lives on the story, in one place** — a `Status:` line on the story itself. The epic index
+  and release page *derive* status by reference; they don't carry their own copy to drift out of
+  sync. Use one legend across the tree (e.g. `planned` / `in progress` / `done` / `deferred`) and
+  define it in `index.md`.
+- **A release page names its scope by ID and links to it.** Entry criteria (what must be true to
+  start), the story list, exit criteria (what must be true to ship), and status. Nothing else — the
+  detail lives in the feature file.
+- **A story belongs to exactly one release at a time**, and that assignment lives on the release
+  page, not on the story. Otherwise moving a story between releases means editing two files and
+  forgetting one.
+
+## 5. Persistence — so future sessions inherit this
+
+This is the half that outlives the run. Four obligations, none optional:
+
+1. **`index.md` is the convention record.** It states the taxonomy, the ID scheme, the status legend,
+   the "one home per story, releases link" rule, and the "progress.md is never sharded" rule — in the
+   imperative, addressed to whoever adds the next epic. This is why the skill needs no separate
+   design doc: the tree documents itself at its own entry point.
+2. **Point `CLAUDE.md`/`AGENTS.md` at it**, extending whatever documentation section already exists:
+   `- <spec-root>/index.md — how the spec tree is organized; read before adding an epic or cutting a
+   release.` If the repo has no such file, don't create one for this — report the gap.
+3. **Leave a redirect stub at the old path** when migrating. The monolith's path is referenced from
+   commit messages, PRs and other repos, which cannot be grepped and fixed. The stub is a short page
+   listing where each former section now lives. Delete it only when the user asks.
+4. **Fix inbound references collected in §1**, repo-wide. Deep anchors (`spec.md#4-decisions`) need
+   re-pointing at the new file *and* the new anchor — verify the anchor actually exists in the
+   destination rather than assuming the heading survived the move.
+
+### Docs-site obligations
+
+If the repo has a nav-driven docs site, this skill owns its own `nav:` subtree and must leave the
+site green — it does not defer that to a later run of the docs skill:
+
+- Add the new pages to `nav:`, remove the monolith's entry, keep the redirect stub reachable (an
+  orphan check will otherwise fail it).
+- **If the tree crosses roughly 15–20 nav entries, nav-link only `<spec-root>/index.md`** and leave
+  individual epic/feature pages out of `nav:` entirely, letting the index page's own table be the
+  browse surface. Pages absent from `nav:` still build and serve. If a `mkdocs-site-setup` skill is
+  available, this is its documented rule for oversized folders — follow it there rather than
+  inventing a second policy.
+- **Theme-level changes are out of scope.** If the tree makes the sidebar genuinely unusable without
+  structural theme features (tabs, section indexes), say so in the report and hand back to the docs
+  skill. Don't edit theme config here.
+- Validate with the repo's **own** commands (`task lint`, `mkdocs build --strict`, the repo's docs
+  linter). Do not add a second linter.
+
+### Interop with a task-vocabulary skill
+
+If a `go-task-setup` skill is in play, its spec mode emits a task-vocabulary story into this tree.
+Give it a home: that story belongs in the first epic and the first release, since it builds the
+guardrails later stories are implemented under. Match this tree's ID scheme when it does.
+
+## 6. Reconcile mode — safe re-run
+
+The recurring job after the first pass is not restructuring, it's maintenance. Additive by default:
+
+- **Adding an epic or feature**: allocate the next free ID, create the files, update `index.md`'s
+  table and the nav subtree. Never renumber siblings.
+- **Cutting a release**: create `releases/release-N/index.md`, list the story IDs in scope, set entry
+  and exit criteria. Moving a story between releases edits only the two release pages.
+- **Drift to check**: story IDs referenced from a release that no longer exist; stories in no release
+  at all; status on an epic index contradicting its stories; pages missing from `nav:`; links into
+  the old monolith path that crept back in.
+- **Closing out work**: append to `progress.md`, flip story statuses. Do not delete completed
+  stories — the spec is a record, not a queue.
+
+Report drift you find but don't fix silently. A story in no release may be deliberate.
+
+## 7. Validate
+
+- The repo's docs linter and a strict site build, if either exists — with real output.
+- `grep -rn '<old-spec-path>'` across the repo returns only the redirect stub and intentional
+  historical references.
+- Every ID referenced from a release page resolves to a story that exists.
+- Word-count or line-count the migration: content in ≈ content out. A large shortfall means prose was
+  dropped in the move, which is the failure mode this step exists to catch.
+
+## 8. Report
+
+State the mode and why it was picked. Then: the mapping actually applied (old section → new file),
+anything dropped and why, the ID scheme used and whether it was adopted from the repo or introduced,
+which inbound references were rewritten and where the redirect stub sits, what landed in `nav:` and
+whether the index-only rule was triggered, anything handed back to the docs skill, and validation
+results with real output.
+
+Do not commit or push. Leave everything in the working tree.

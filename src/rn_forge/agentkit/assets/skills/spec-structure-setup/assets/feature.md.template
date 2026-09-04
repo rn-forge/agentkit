@@ -1,0 +1,20 @@
+# F__N__.__M__ — __FEATURE_NAME__
+
+Part of [E__N__ — __EPIC_NAME__](index.md).
+
+__ONE_PARAGRAPH_ON_THE_BEHAVIOUR_THIS_FEATURE_ADDS__
+
+## S__N__.__M__.1 — __STORY_NAME__
+
+**Status:** planned
+
+__WHAT_CHANGES_FOR_A_USER_OR_CALLER_ONE_OR_TWO_SENTENCES__
+
+Acceptance criteria — each one a check that can fail:
+
+- [ ] __OBSERVABLE_OUTCOME_NOT_AN_IMPLEMENTATION_STEP__
+- [ ] __A_COMMAND_THAT_EXITS_ZERO_OR_AN_ASSERTION_THAT_HOLDS__
+
+Notes:
+
+- __CONSTRAINTS_EDGE_CASES_OR_A_LINK_INTO_decisions_md__

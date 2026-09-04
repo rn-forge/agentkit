@@ -41,6 +41,7 @@ def test_claude_artifacts_and_scope_defaults() -> None:
     assert "skills/go-task-setup/SKILL.md" in skill_keys
     assert "skills/mkdocs-site-setup/SKILL.md" in skill_keys
     assert "skills/sonar-cleanup/SKILL.md" in skill_keys
+    assert "skills/spec-structure-setup/SKILL.md" in skill_keys
     assert [artifact.key for artifact in adapter.artifacts("local")] == [
         "hooks/post-edit-format.sh",
         "config",

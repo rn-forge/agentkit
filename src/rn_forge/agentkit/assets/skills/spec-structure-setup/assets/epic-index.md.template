@@ -1,0 +1,19 @@
+# E__N__ — __EPIC_NAME__
+
+**Status:** planned
+
+__ONE_PARAGRAPH_ON_WHAT_THIS_EPIC_DELIVERS_AND_WHY_IT_IS_ONE_UNIT__
+
+## Out of scope
+
+- __WHAT_A_READER_MIGHT_REASONABLY_EXPECT_HERE_BUT_WON_T_FIND__
+
+## Features
+
+| ID | Feature | Status |
+|---|---|---|
+| F__N__.1 | [__FEATURE_NAME__](F__N__.1-__FEATURE_SLUG__.md) | planned |
+
+## Depends on
+
+- __OTHER_EPIC_OR_STORY_IDS__, or "nothing — the repo existing is enough"

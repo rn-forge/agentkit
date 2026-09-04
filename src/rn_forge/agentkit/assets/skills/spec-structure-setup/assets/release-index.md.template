@@ -1,0 +1,26 @@
+# release-__N__ — __RELEASE_NAME__
+
+**Status:** planned
+
+__ONE_PARAGRAPH_ON_WHAT_THIS_RELEASE_IS_FOR_AND_WHO_IT_UNBLOCKS__
+
+## Entry criteria
+
+- __WHAT_MUST_BE_TRUE_BEFORE_WORK_STARTS__
+
+## Scope
+
+Stories are defined in their feature files; this table only records what ships here.
+
+| Story | Title | Status |
+|---|---|---|
+| [S__N__.1.1](../../epics/E__N__-__EPIC_SLUG__/F__N__.1-__FEATURE_SLUG__.md#s__n__11--__STORY_ANCHOR__) | __STORY_NAME__ | planned |
+
+## Exit criteria
+
+- [ ] Every story above is `done`
+- [ ] __WHAT_MUST_BE_TRUE_TO_CALL_THIS_SHIPPED__
+
+## Explicitly not in this release
+
+- __DEFERRED_ITEM__ → __WHICH_RELEASE_OR_backlog_md__

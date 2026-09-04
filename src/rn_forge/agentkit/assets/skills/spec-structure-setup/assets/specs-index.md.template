@@ -1,0 +1,42 @@
+# __PROJECT__ specifications
+
+How this spec tree is organized, and the rules that keep it usable. Read this before adding an epic
+or cutting a release.
+
+## Layout
+
+| Path | Holds |
+|---|---|
+| `overview.md` | Objective, success criteria, non-goals |
+| `decisions.md` | Locked architectural decisions |
+| `progress.md` | Append-only build log — what shipped, when |
+| `backlog.md` | Deferred and not-yet-scoped work |
+| `epics/E<n>-<slug>/` | An epic: its features, each feature its stories |
+| `releases/release-<n>/` | A delivery slice: which stories ship, entry and exit criteria |
+
+## Rules
+
+- **IDs are permanent.** `E<n>` epic, `F<n>.<m>` feature, `S<n>.<m>.<k>` story. Reorganizing never
+  renumbers; a story that moves keeps its ID and notes where it came from. Gaps are fine.
+- **One home per story.** A story's text lives in its feature file. Release pages link to it by ID
+  and never restate it.
+- **Status lives on the story.** Epic indexes and release pages derive status by reference rather
+  than carrying their own copy.
+- **`progress.md` is never sharded.** Status has to stay answerable in one read.
+- **A story belongs to one release at a time**, recorded on the release page, not on the story.
+
+## Status legend
+
+`planned` · `in progress` · `done` · `deferred`
+
+## Epics
+
+| ID | Epic | Status | Release |
+|---|---|---|---|
+| E1 | [__EPIC_NAME__](epics/E1-__EPIC_SLUG__/index.md) | planned | release-1 |
+
+## Releases
+
+| Release | Scope | Status |
+|---|---|---|
+| [release-1](releases/release-1/index.md) | __RELEASE_SUMMARY__ | planned |

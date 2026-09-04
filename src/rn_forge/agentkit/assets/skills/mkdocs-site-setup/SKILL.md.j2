@@ -80,6 +80,27 @@ the repo* (README, CLAUDE.md/AGENTS.md, existing comments), not templated boiler
 "Architecture Overview" page that just restates the nav is worse than not having the page. On a
 reconciliation pass, leave existing prose pages alone; only add pages that are still missing.
 
+**If the repo already has a `specs/` tree, surface it in `nav:` as it stands and do not impose a
+taxonomy on it.** How specs decompose (epics, features, stories, release slices) is a separate
+decision with its own lifecycle — a `spec-structure-setup` skill owns it, and that skill takes
+responsibility for its own nav subtree. Note the opportunity to the user if the tree is clearly a
+monolith, but don't restructure it from here.
+
+### Canonical top-level nav order
+
+Across repos this skill scaffolds, order top-level `nav:` sections the same way by default, so a
+reader who has seen one site built by this skill isn't reoriented by another:
+
+```
+Home → Architecture → Guides → Runbooks → Reference → Decisions (ADR/DECISIONS) → Specifications
+```
+
+Include only the sections the target repo actually has (skip `Runbooks` if there's no
+`docs/runbooks/`, skip `Decisions` if the repo has no ADR/decisions log) — this is an ordering rule
+for whatever sections exist, not a mandate to create empty ones. Deviate only when the repo's own
+existing nav already encodes a deliberate order worth preserving (step 0's "existing docs" check) —
+note the deviation in `docs-system.md`/the ADR from step 7 so it's a recorded choice, not drift.
+
 ### Navigation design for large trees
 
 An explicit `nav:` beats mkdocs' directory-order default the moment any folder holds more files
@@ -119,8 +140,12 @@ top. If that's the real ask, it's a request for an anchor per record in the inde
 back-link on the record page — and whether that's worth the generated-anchor upkeep is a case-by-case
 call, not a default.
 
-Two theme features are free UX wins with no new dependency, worth defaulting on: `search.suggest`
-(autocomplete in the search box) and `search.highlight` (highlights the match in search results).
+Three theme features are free UX wins with no new dependency, worth defaulting on: `search.suggest`
+(autocomplete in the search box), `search.highlight` (highlights the match in search results), and
+a light/dark `palette` toggle (`scheme: default` / `scheme: slate`, each following
+`prefers-color-scheme` with a manual toggle button) — material ships this natively; without it the
+site is stuck in light mode regardless of the reader's OS setting. Default to it on every site this
+skill scaffolds unless the repo's own existing `mkdocs.yml` already sets `palette` deliberately.
 
 **Plugins from the [mkdocs catalog](https://github.com/mkdocs/catalog) are a separate decision from
 theme features** — a theme feature is free (already inside `mkdocs-material`, no dependency), a
@@ -205,6 +230,34 @@ Copy `assets/gen-docs.sh.template` to `scripts/gen-docs.sh`, `chmod +x` it, and 
   second pass).
 - `__SITE_OUT_DEFAULT__` — where `mkdocs build` writes locally (must NOT be nested under `docs/`;
   MkDocs refuses that). `.docs-site/` or similar, gitignored.
+
+**Local site-dir convention — standardize the variable name across every repo this skill touches,
+even when a repo has no frontend and skips this whole orchestration-script step:** the task var (or
+env var) is always named `MKDOCS_SITE_DIR`, defaulting to `.docs-site` (gitignored, and — per MkDocs
+— must NOT be nested under `docs_dir`). Wire it the same way regardless of whether the build is a
+wrapper script (this step) or a direct `mkdocs build` invocation (skipped when there's no frontend
+to generate first, e.g. a Python-only repo):
+{% raw %}```yaml
+# tasks/docs.yml
+vars:
+  MKDOCS_SITE_DIR: .docs-site
+
+tasks:
+  build:
+    cmds:
+      # direct invocation:
+      - uv run --group docs mkdocs build --strict --site-dir "{{.CLI_ARGS | default .MKDOCS_SITE_DIR}}"
+      # or, wrapping a script that itself needs the frontend-generation steps:
+      - ./scripts/gen-docs.sh {{.CLI_ARGS | default .MKDOCS_SITE_DIR}}
+```
+`{{.CLI_ARGS}}` stays the escape hatch CI uses to target a temp dir for the Pages upload (`task
+docs:build -- "$RUNNER_TEMP/site"`) — the variable only sets the *local* default.{% endraw %} Don't let a
+repo's own working-directory convention (an app-state root like `.<product>/`) pull the docs
+output in as a nested path — even though it's tempting when that root is already gitignored, it
+conflates two unrelated things (app runtime state vs. a build artifact) and breaks the one thing
+this variable is supposed to buy: the same default in every repo. If a target repo already has
+build output nested under its own app-state dir from before this convention existed, moving it
+to `.docs-site` at the repo root is a small ADR/decisions-log-worthy call — record why, per step 7.
 
 ## 5. Docs linter
 
