@@ -204,12 +204,22 @@ def self_upgrade(
             "upgrade."
         ),
     ),
+    source: Path | None = typer.Option(
+        None,
+        "--source",
+        help=(
+            "Build and install directly from a local source checkout (e.g. this "
+            "repo's working tree) — no GitHub calls, and always installs even if "
+            "the version matches what's already current. For local validation "
+            "before pushing; mutually exclusive with --archive."
+        ),
+    ),
     quiet: bool = typer.Option(False, "--quiet", "-q", help=QUIET_HELP),
     json_output: bool = typer.Option(False, "--json", help=JSON_HELP),
 ) -> None:
-    """Install the latest agentkit release, or a local --archive, without applying
-    config."""
-    SelfCommand(ctx, quiet=quiet, json_output=json_output).upgrade(archive, quiet)
+    """Install the latest agentkit release, a local --archive, or a local
+    --source checkout, without applying config."""
+    SelfCommand(ctx, quiet=quiet, json_output=json_output).upgrade(archive, source, quiet)
 
 
 @self_app.command("cleanup")

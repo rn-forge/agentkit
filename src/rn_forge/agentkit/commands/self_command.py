@@ -19,7 +19,9 @@ import tarfile
 import tempfile
 import time
 import urllib.request
+from collections.abc import Callable
 from pathlib import Path
+from typing import NoReturn
 
 import typer
 
@@ -147,37 +149,55 @@ def _flip_current(product_home: Path, target: Path) -> None:
     tmp_link.replace(product_home / "current")
 
 
+def _resolve_source_root(
+    archive: Path | None, source: Path | None, tmp_path: Path, fail: Callable[[str], NoReturn]
+) -> Path:
+    """Resolve the source tree to install from: a local checkout, a tarball, or a
+    freshly downloaded release."""
+    if source is not None:
+        if not source.is_dir():
+            fail(f"source directory not found: {source}")
+        return source.expanduser().resolve()
+
+    tarball = tmp_path / "agentkit.tar.gz"
+    if archive is not None:
+        if not archive.is_file():
+            fail(f"archive not found: {archive}")
+        shutil.copy(archive, tarball)
+    else:
+        _download_tarball(_resolve_latest_tag(), tarball)
+    return _extract_source(tarball, tmp_path / "extracted")
+
+
 class SelfCommand(BaseCommand):
     """Implement ``agentkit upgrade``, ``cleanup``, and ``uninstall``."""
 
-    def upgrade(self, archive: Path | None, quiet: bool) -> None:
-        """Install the latest agentkit release, or a local --archive, without applying
-        config."""
+    def upgrade(self, archive: Path | None, source: Path | None, quiet: bool) -> None:
+        """Install the latest agentkit release, a local --archive, or a local
+        --source checkout, without applying config."""
+        if archive is not None and source is not None:
+            self.fail("--archive and --source are mutually exclusive")
+
         product_home = _product_home()
         product_home.mkdir(parents=True, exist_ok=True)
         current_version = __version__
 
         with tempfile.TemporaryDirectory() as tmp:
-            tmp_path = Path(tmp)
-            tarball = tmp_path / "agentkit.tar.gz"
-            if archive is not None:
-                if not archive.is_file():
-                    self.fail(f"archive not found: {archive}")
-                shutil.copy(archive, tarball)
-            else:
-                _download_tarball(_resolve_latest_tag(), tarball)
-
-            source_root = _extract_source(tarball, tmp_path / "extracted")
+            source_root = _resolve_source_root(archive, source, Path(tmp), self.fail)
             version = _read_version(source_root / "pyproject.toml")
 
-            if version == current_version:
+            # --source always installs, even at the same version — it's for repeated
+            # local validation of an unreleased checkout, not a real upgrade check.
+            if source is None and version == current_version:
                 self.report(
                     {"status": "already-current", "version": version},
                     f"agentkit v{version} is already installed.",
                 )
                 return
 
-            verb = "Installing" if archive is not None else "Upgrading to"
+            verb = "Upgrading to"
+            if archive is not None or source is not None:
+                verb = "Installing"
             if not quiet and not self.json_output:
                 console.print(
                     f"{verb} agentkit v{version} (current: v{current_version}) ..."
