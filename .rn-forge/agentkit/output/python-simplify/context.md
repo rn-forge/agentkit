@@ -31,7 +31,7 @@ there. Read it before proposing a "hardening" finding.
 definitions.
 
 | Purpose | Command |
-|---|---|
+| -- | -- |
 | format | `task format` (ruff + mdformat, in place) |
 | lint | `task lint` (python, task layout, CI entrypoint, docs, markdown) |
 | typecheck | `task typecheck` (`pyright src`, strict, zero errors) |
@@ -63,9 +63,9 @@ Two conventions a refactor must not break:
   Never write a test that bypasses it.
 - Artifact and operation-result **ordering is not a tested contract**. Do not
   write or accept a test that indexes into `AgentAdapter.artifacts()` or an
-  `apply_adapter()`/`sync_adapter()`/`reset_adapter()` result list positionally.
-  Select by `.key` / `.artifact` — see the `_result_for` helpers in
-  `tests/core/test_manager.py` and `tests/core/test_doctor.py`.
+  `apply_adapter()`/`sync_adapter()`/`reset_adapter()` result list
+  positionally. Select by `.key` / `.artifact` — see the `_result_for` helpers
+  in `tests/core/test_manager.py` and `tests/core/test_doctor.py`.
 
 Coverage is not thin anywhere that has been swept so far, and there is no
 coverage floor (a deliberate trade-off, recorded in

@@ -128,11 +128,11 @@ so each return reads `return outcome(False, "no native config")` and the branch
 condition is the whole line.
 
 **Rejected alternative:** a module-level shared builder across both functions.
-Rejected because they differ in `action` and in what varies (`remove_owned_
-artifacts` builds inside a loop over artifacts, so `artifact` and `native` are
-not stable across calls) — the closure captures exactly what is stable in each,
-which a shared function would have to take as parameters, giving back the arity
-this is meant to remove.
+Rejected because they differ in `action` and in what varies
+(`remove_owned_ artifacts` builds inside a loop over artifacts, so `artifact`
+and `native` are not stable across calls) — the closure captures exactly what is
+stable in each, which a shared function would have to take as parameters, giving
+back the arity this is meant to remove.
 
 **Not a finding here:** the drift check that leaves a modified file in place is
 duplicated logic-shaped, but it is the same drift-safety contract
@@ -267,9 +267,9 @@ five things in one function body: parse overrides, optionally capture (config,
 assets, defaults — three different write paths, each conditionally run), run
 `resolve_config` and the per-artifact diff loop, and assemble a six-key nested
 dict per adapter for `--json`/table output. This is the same "construction mixed
-with decision logic" pattern §15.2 (B1, B4) already fixes in `core/doctor.py:
-check_agent` — `diff()` just didn't exist as a `RootCommand` method yet when
-that plan was written.
+with decision logic" pattern §15.2 (B1, B4) already fixes in
+`core/doctor.py: check_agent` — `diff()` just didn't exist as a `RootCommand`
+method yet when that plan was written.
 
 Extract the per-adapter body of the `for adapter in self.selected(agent):` loop
 (lines 213-295) into a private method:
@@ -303,7 +303,7 @@ and table/JSON output, which are unchanged by moving where the dict is built.
 Every module in scope, one line each.
 
 | Module | Verdict |
-|---|---|
+| -- | -- |
 | `commands/__init__.py` | fine — re-export surface, 7 lines |
 | `commands/base.py` | act (A1) — gains `remove_confirmed`; nothing wrong with what is there today |
 | `commands/global_command.py` | act (B1) — one of the two duplicated drift-tuple call sites |
