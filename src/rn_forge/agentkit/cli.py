@@ -219,7 +219,9 @@ def self_upgrade(
 ) -> None:
     """Install the latest agentkit release, a local --archive, or a local
     --source checkout, without applying config."""
-    SelfCommand(ctx, quiet=quiet, json_output=json_output).upgrade(archive, source, quiet)
+    SelfCommand(ctx, quiet=quiet, json_output=json_output).upgrade(
+        archive, source, quiet
+    )
 
 
 @self_app.command("cleanup")

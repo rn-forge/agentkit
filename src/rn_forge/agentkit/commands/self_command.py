@@ -150,7 +150,10 @@ def _flip_current(product_home: Path, target: Path) -> None:
 
 
 def _resolve_source_root(
-    archive: Path | None, source: Path | None, tmp_path: Path, fail: Callable[[str], NoReturn]
+    archive: Path | None,
+    source: Path | None,
+    tmp_path: Path,
+    fail: Callable[[str], NoReturn],
 ) -> Path:
     """Resolve the source tree to install from: a local checkout, a tarball, or a
     freshly downloaded release."""

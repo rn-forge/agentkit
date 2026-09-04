@@ -1,0 +1,7 @@
+# agentkit managed source — codex, local scope.
+#
+# Keys set here override the packaged local defaults and are merged into every
+# rendered codex artifact. This file is the layer you edit by hand; it is also
+# where `agentkit diff --scope local --write` captures native changes.
+#
+# An empty file means "no local overrides" — the packaged defaults apply as-is.
